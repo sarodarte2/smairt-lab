@@ -248,6 +248,8 @@ def doctor_command(as_json: Annotated[bool, typer.Option("--json")] = False) -> 
                 f"{finding['message']}\n[cyan]Next:[/] "
                 f"{finding.get('remediation', 'Inspect the artifact.')}"
             )
+        for warning in cast(list[str], payload.get("warnings", [])):
+            console.print(f"\n[yellow]Warning:[/] {escape(warning)}")
         console.print("\n[dim]Technical report: smairt doctor --json[/dim]")
     if not payload["ok"]:
         raise typer.Exit(1)
@@ -681,10 +683,30 @@ def status_command(
     )
     console.print(f"Author: {escape(str(project['author']))}")
     console.print(f"Active: {payload['active'] or 'none'}")
+    console.print(f"Stage: {escape(str(payload.get('stage', 'unknown')))}")
     validation = cast(dict[str, Any], payload["validation"])
     console.print(f"Validation: {'PASS' if validation['ok'] else 'FAIL'}")
     if not compact:
         console.print(payload["counts"])
+        readiness = cast(dict[str, Any], payload.get("readiness", {}))
+        if readiness:
+            ready = ", ".join(
+                f"{key}={'yes' if value else 'no'}" for key, value in readiness.items()
+            )
+            console.print(f"Readiness: {ready}")
+        guidance = cast(dict[str, Any], payload.get("guidance", {}))
+        recommended = next(
+            (
+                action
+                for action in cast(list[dict[str, Any]], guidance.get("actions", []))
+                if action.get("recommended")
+            ),
+            None,
+        )
+        if recommended:
+            console.print(f"Next: {escape(str(recommended.get('label', '')))}")
+            if recommended.get("command"):
+                console.print(f"  [cyan]{escape(str(recommended['command']))}[/]")
         for warning in validation["warnings"]:
             console.print(f"[yellow]Warning:[/] {escape(str(warning))}")
 

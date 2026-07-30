@@ -71,8 +71,8 @@ def doctor(root: Path) -> dict[str, object]:
     warnings = []
     if schema in {"v2", "v3", "v4", "v5", "v6", "v7"}:
         warnings.append(
-            "Project updates are available; open Health & updates → Project updates or run "
-            "'smairt update --apply' when ready."
+            "Project updates are available; run `smairt update --apply` when ready "
+            "(or use Health & updates → Project updates in `smairt menu`)."
         )
     ok = bool(
         validation["ok"]

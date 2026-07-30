@@ -113,7 +113,17 @@ def next_guidance(root: Path) -> dict[str, Any]:
         hypothesis = (
             find_hypothesis(root, config.active.hypothesis) if config.active.hypothesis else None
         )
-        return _active_experiment_guidance(root, config, experiments, hypothesis)
+        has_run = bool(list((root / "results").glob("EXPERIMENT_*/*/RUN_*")))
+        background_incomplete = (
+            not background.exists()
+            or background.read_text(encoding="utf-8").strip()
+            == "# Initial Background\n\nStatus: DRAFT"
+            or bool(validate_background(root))
+        )
+        # Prefer active experiment guidance once setup is in place or execution has begun.
+        # Exploratory projects with only an empty experiment still receive setup catch-up.
+        if has_run or not background_incomplete or config.active.hypothesis:
+            return _active_experiment_guidance(root, config, experiments, hypothesis)
 
     if not references:
         return _guidance(
@@ -198,6 +208,14 @@ def next_guidance(root: Path) -> dict[str, Any]:
                     command="smairt hypothesis proposals new",
                 ),
                 _action(
+                    "exploratory_experiment",
+                    "Start an exploratory experiment with an explicit purpose",
+                    kind="command",
+                    command=(
+                        "smairt experiment new --title '<title>' --purpose '<exploratory purpose>'"
+                    ),
+                ),
+                _action(
                     "review_background",
                     "Review the completed background first",
                     kind="read",
@@ -268,7 +286,7 @@ def next_guidance(root: Path) -> dict[str, Any]:
             [
                 _action(
                     "choose_experiment_route",
-                    "Compare three experimental routes",
+                    "Compare three experimental routes, then create one",
                     kind="human_choice",
                     recommended=True,
                     requires_human=True,
@@ -276,6 +294,19 @@ def next_guidance(root: Path) -> dict[str, Any]:
                     prompt=(
                         "Offer three distinct experimental routes with rationale, tradeoffs, "
                         "required data, controls, and expected evidence."
+                    ),
+                    command=(
+                        f"smairt experiment new --title '<title>' "
+                        f"--hypothesis {config.active.hypothesis}"
+                    ),
+                ),
+                _action(
+                    "create_experiment",
+                    "Create the chosen linked experiment",
+                    kind="command",
+                    command=(
+                        f"smairt experiment new --title '<title>' "
+                        f"--hypothesis {config.active.hypothesis}"
                     ),
                 ),
                 _action(
@@ -389,7 +420,13 @@ def _active_experiment_guidance(
                     kind="command",
                     recommended=True,
                     command="smairt validate",
-                )
+                ),
+                _action(
+                    "verify_runs",
+                    "Verify integrity manifests for recorded runs",
+                    kind="command",
+                    command="smairt verify --json",
+                ),
             ],
         )
     decisions = root / "analysis" / str(metadata["id"]) / "decisions.yaml"
@@ -416,6 +453,18 @@ def _active_experiment_guidance(
                     prompt=(
                         "Separate observations, derived results, interpretation, limitations, "
                         "and confounders; then ask me to ACCEPT, REVISE, ABANDON, or mark BLOCKED."
+                    ),
+                ),
+                _action(
+                    "record_decision",
+                    "Record the human decision for this run",
+                    kind="command",
+                    requires_human=True,
+                    command=(
+                        f"smairt decision record --experiment {metadata['id']} "
+                        f"--iteration {iteration_id} --run {latest_run.name} "
+                        "--decision ACCEPT|REVISE|ABANDON|BLOCKED "
+                        "--rationale '<rationale>' --decided-by '<contributor>'"
                     ),
                 ),
                 _action(
@@ -507,6 +556,7 @@ def _paper_guidance(root: Path, accepted_run: str) -> dict[str, Any] | None:
     proposed = [claim for claim in claims if claim.status.value == "proposed"]
     approved = [claim for claim in claims if claim.status.value == "approved"]
     if proposed:
+        claim_id = proposed[0].id
         return _guidance(
             "claim_review",
             f"{len(proposed)} proposed claim(s) require human review.",
@@ -518,6 +568,7 @@ def _paper_guidance(root: Path, accepted_run: str) -> dict[str, Any] | None:
                     recommended=True,
                     requires_human=True,
                     read=["paper/claims/"],
+                    command=f"smairt paper claim approve {claim_id} --yes",
                 )
             ],
         )
@@ -529,9 +580,16 @@ def _paper_guidance(root: Path, accepted_run: str) -> dict[str, Any] | None:
                 _action(
                     "propose_claim",
                     "Propose a claim grounded in the evidence card",
-                    kind="prompt",
+                    kind="command",
                     recommended=True,
                     read=["paper/evidence/"],
+                    command=(
+                        "smairt paper claim propose --statement '<claim>' --evidence <evidence-id>"
+                    ),
+                    prompt=(
+                        "Draft a bounded claim supported by the current evidence card, then "
+                        "propose it with smairt paper claim propose."
+                    ),
                 )
             ],
         )
