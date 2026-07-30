@@ -37,7 +37,7 @@ from smairt.utils import (
 
 
 def accepted_runs(root: Path) -> dict[str, dict[str, Any]]:
-    """Return only completed, relationship-consistent, integrity-verified selections."""
+    """Return only completed, decision-backed, integrity-verified selections."""
     accepted: dict[str, dict[str, Any]] = {}
     for selection in (root / "analysis").glob("*/selection.yaml"):
         payload = yaml.safe_load(selection.read_text()) or {}
@@ -54,6 +54,21 @@ def accepted_runs(root: Path) -> dict[str, dict[str, Any]]:
             validate_identifier(identifier, label=label)
         if experiment_id != selection.parent.name:
             raise ValueError("accepted selection does not match its analysis directory")
+        decisions_path = selection.parent / "decisions.yaml"
+        if not decisions_path.is_file():
+            raise ValueError(f"accepted selection has no decision record: {run_id}")
+        decisions_payload = yaml.safe_load(decisions_path.read_text()) or {}
+        decision_rows = decisions_payload.get("decisions", [])
+        if not isinstance(decision_rows, list) or not any(
+            isinstance(row, dict)
+            and str(row.get("run_id", "")) == run_id
+            and str(row.get("iteration_id", "")) == iteration_id
+            and str(row.get("decision", "")) == "ACCEPT"
+            for row in decision_rows
+        ):
+            raise ValueError(
+                f"accepted selection is not backed by an ACCEPT decision record: {run_id}"
+            )
         run_path = root / "results" / experiment_id / iteration_id / run_id / "run.json"
         record = RunRecord.model_validate_json(run_path.read_text(encoding="utf-8"))
         if (

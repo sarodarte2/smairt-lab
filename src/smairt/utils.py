@@ -39,11 +39,9 @@ def ensure_no_symlink(root: Path, path: Path) -> Path:
     """Resolve a contained path while rejecting every symlink component."""
     root = root.resolve()
     requested = path if path.is_absolute() else root / path
-    lexical = requested.absolute()
-    try:
-        relative = lexical.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"path escapes project root: {path}") from exc
+    # Resolve end-to-end first so macOS /tmp → /private/tmp prefixes compare equal.
+    resolved = ensure_within(root, requested)
+    relative = resolved.relative_to(root)
     if ".." in relative.parts:
         raise ValueError(f"path escapes project root: {path}")
     cursor = root
@@ -51,7 +49,7 @@ def ensure_no_symlink(root: Path, path: Path) -> Path:
         cursor /= part
         if cursor.is_symlink():
             raise ValueError(f"path contains a symlink: {path}")
-    return ensure_within(root, lexical)
+    return resolved
 
 
 def sha256_file(path: Path) -> str:

@@ -138,11 +138,16 @@ def _sanitized_command(command: list[str]) -> tuple[list[str], list[str]]:
 
 
 def _redact_text(value: str, secrets: list[str]) -> str:
-    """Remove command-derived secret values from child output and failures."""
+    """Remove command-derived and pattern-matched secrets from child output."""
+    from smairt.safety import SECRET_PATTERNS
+
     redacted = value
     for secret in sorted(set(secrets), key=len, reverse=True):
         redacted = redacted.replace(secret, "[REDACTED]")
-    return _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", redacted)
+    redacted = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", redacted)
+    for pattern in SECRET_PATTERNS.values():
+        redacted = pattern.sub("[REDACTED]", redacted)
+    return redacted
 
 
 def _resolved_entrypoint(
@@ -279,6 +284,10 @@ def run_experiment(
     log_path = run_dir / "run.log"
     incomplete_log = run_dir / ".run.log.incomplete"
     started_at = utc_now()
+    reserved_git = _git_capture(root)
+    config_digest = sha256_file(iteration_config) if iteration_config.exists() else None
+    protocol_digest = sha256_file(protocol_path) if protocol_path.exists() else None
+    reserved_redactions: list[dict[str, str]] = []
     initial = RunRecord(
         run_id=run_id,
         experiment_id=experiment_id,
@@ -289,12 +298,46 @@ def run_experiment(
         working_directory=str(iteration.relative_to(root)),
         log_path=str(log_path.relative_to(root)),
         results_directory=str(run_dir.relative_to(root)),
-        environment={"mode": config.environment.mode.value},
+        config_sha256=config_digest,
+        protocol_sha256=protocol_digest,
+        git_commit=reserved_git["commit"],
+        git_dirty=bool(reserved_git["dirty"]),
+        environment={
+            "mode": config.environment.mode.value,
+            "git_capture_status": reserved_git["status"],
+            "provenance_captured_at": "reserve",
+        },
         manifest_path=str((run_dir / "manifest.json").relative_to(root)),
     )
     with ProjectMutationLock(root, f"run reserve {experiment_id}/{iteration_id}"):
         figures_dir.mkdir(parents=True)
         artifacts_dir.mkdir()
+        reserved_redactions.extend(_write_git_artifacts(root, run_dir, reserved_git))
+        if iteration_config.exists():
+            safe, receipt = _safe_snapshot(iteration_config.read_bytes(), "config.snapshot.yaml")
+            if receipt:
+                reserved_redactions.append(receipt)
+            elif safe is not None:
+                atomic_write_bytes(run_dir / "config.snapshot.yaml", safe)
+        if protocol_path.exists():
+            safe, receipt = _safe_snapshot(protocol_path.read_bytes(), "protocol.snapshot.yaml")
+            if receipt:
+                reserved_redactions.append(receipt)
+            elif safe is not None:
+                atomic_write_bytes(run_dir / "protocol.snapshot.yaml", safe)
+        entrypoint = _resolved_entrypoint(iteration, original_command, metadata)
+        if entrypoint:
+            name = f"entrypoint.snapshot{entrypoint.suffix}"
+            safe, receipt = _safe_snapshot(entrypoint.read_bytes(), name)
+            if receipt:
+                reserved_redactions.append(receipt)
+            elif safe is not None:
+                atomic_write_bytes(run_dir / name, safe)
+        if reserved_redactions:
+            environment = dict(initial.environment)
+            environment["omitted_provenance"] = reserved_redactions
+            initial = initial.model_copy(update={"environment": environment})
+            write_json(run_dir / "provenance-omissions.json", {"omissions": reserved_redactions})
         write_json(run_dir / "run.json", initial.model_dump(mode="json", exclude_none=True))
 
     status = RunStatus.FAILED
@@ -391,7 +434,23 @@ def run_experiment(
             signal.signal(restore_signum, handler)
 
     completed_at = utc_now()
-    git = _git_capture(root)
+    environment = dict(environment_info)
+    environment["git_capture_status"] = reserved_git["status"]
+    environment["provenance_captured_at"] = "reserve"
+    if reserved_redactions:
+        environment["omitted_provenance"] = reserved_redactions
+    # Record post-run drift without replacing reserve digests that describe execution inputs.
+    drift: dict[str, str] = {}
+    if config_digest and iteration_config.exists():
+        live_config = sha256_file(iteration_config)
+        if live_config != config_digest:
+            drift["config_sha256"] = live_config
+    if protocol_digest and protocol_path.exists():
+        live_protocol = sha256_file(protocol_path)
+        if live_protocol != protocol_digest:
+            drift["protocol_sha256"] = live_protocol
+    if drift:
+        environment["input_drift_after_run"] = drift
     record = RunRecord(
         run_id=run_id,
         experiment_id=experiment_id,
@@ -404,11 +463,11 @@ def run_experiment(
         working_directory=str(iteration.relative_to(root)),
         log_path=str(log_path.relative_to(root)),
         results_directory=str(run_dir.relative_to(root)),
-        config_sha256=sha256_file(iteration_config) if iteration_config.exists() else None,
-        protocol_sha256=sha256_file(protocol_path) if protocol_path.exists() else None,
-        git_commit=git["commit"],
-        git_dirty=bool(git["dirty"]),
-        environment=environment_info,
+        config_sha256=config_digest,
+        protocol_sha256=protocol_digest,
+        git_commit=reserved_git["commit"],
+        git_dirty=bool(reserved_git["dirty"]),
+        environment=environment,
         manifest_path=str((run_dir / "manifest.json").relative_to(root)),
     )
     with ProjectMutationLock(root, f"run finalize {run_id}"):
@@ -416,35 +475,31 @@ def run_experiment(
             incomplete_log.replace(log_path)
         else:
             atomic_write_bytes(log_path, b"")
-        redactions = _write_git_artifacts(root, run_dir, git)
-        if iteration_config.exists():
-            safe, receipt = _safe_snapshot(iteration_config.read_bytes(), "config.snapshot.yaml")
-            if receipt:
-                redactions.append(receipt)
-            elif safe is not None:
-                atomic_write_bytes(run_dir / "config.snapshot.yaml", safe)
-        if protocol_path.exists():
-            safe, receipt = _safe_snapshot(protocol_path.read_bytes(), "protocol.snapshot.yaml")
-            if receipt:
-                redactions.append(receipt)
-            elif safe is not None:
-                atomic_write_bytes(run_dir / "protocol.snapshot.yaml", safe)
-        entrypoint = _resolved_entrypoint(iteration, original_command, metadata)
-        if entrypoint:
-            name = f"entrypoint.snapshot{entrypoint.suffix}"
-            safe, receipt = _safe_snapshot(entrypoint.read_bytes(), name)
-            if receipt:
-                redactions.append(receipt)
-            elif safe is not None:
-                atomic_write_bytes(run_dir / name, safe)
-        environment = dict(record.environment)
-        environment["git_capture_status"] = git["status"]
-        if redactions:
-            environment["omitted_provenance"] = redactions
-            write_json(run_dir / "provenance-omissions.json", {"omissions": redactions})
-        record = record.model_copy(update={"environment": environment})
+        # Seal artifacts first, then attempt the integrity manifest before claiming
+        # a healthy terminal record. Manifest failure downgrades status to FAILED.
         write_json(run_dir / "run.json", record.model_dump(mode="json", exclude_none=True))
-        build_manifest(root, run_dir)
+        try:
+            build_manifest(root, run_dir)
+        except (OSError, ValueError) as exc:
+            failed_environment = dict(record.environment)
+            failed_environment["finalize_error"] = str(exc)
+            record = record.model_copy(
+                update={
+                    "status": RunStatus.FAILED,
+                    "exit_code": record.exit_code if record.exit_code else 1,
+                    "environment": failed_environment,
+                }
+            )
+            write_json(run_dir / "run.json", record.model_dump(mode="json", exclude_none=True))
+            remanifested = False
+            try:
+                build_manifest(root, run_dir)
+                remanifested = True
+            except (OSError, ValueError):
+                # Leave the terminal record without a manifest; validate flags it.
+                pass
+            if unexpected is None and not remanifested:
+                unexpected = exc
     if unexpected is not None:
         raise unexpected
     return record

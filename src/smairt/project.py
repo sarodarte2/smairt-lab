@@ -413,6 +413,20 @@ def validate_project(
                 relative,
                 "Run was reserved but never finalized; do not use it as evidence",
             )
+        elif run_record.status in {
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.INTERRUPTED,
+        }:
+            manifest_path = run_path.parent / "manifest.json"
+            lock_path = root / ".smairt/run-manifests" / f"{run_record.run_id}.json"
+            if not manifest_path.is_file() or not lock_path.is_file():
+                report.add(
+                    "error",
+                    "run.manifest_missing",
+                    relative,
+                    "Terminal run is missing its integrity manifest or lock",
+                )
         for field_name, recorded_path in (
             ("log", run_record.log_path),
             ("results", run_record.results_directory),

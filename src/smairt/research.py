@@ -566,6 +566,21 @@ def record_decision(
                 "accepted evidence requires the validated protocol snapshot: "
                 + "; ".join(protocol_errors or ["run has no protocol digest"])
             )
+        snapshot_path = run_path.parent / "protocol.snapshot.yaml"
+        if snapshot_path.is_file():
+            snapshot_digest = sha256_file(snapshot_path)
+            if snapshot_digest != run_record.protocol_sha256:
+                raise ValueError(
+                    "accepted evidence requires the run protocol digest to match "
+                    "protocol.snapshot.yaml"
+                )
+        elif protocol_path.is_file():
+            live_digest = sha256_file(protocol_path)
+            if live_digest != run_record.protocol_sha256:
+                raise ValueError(
+                    "accepted evidence requires the run protocol digest to match the "
+                    "protocol captured for this run"
+                )
         summary_errors = validate_result_summary(run_path.parent / "result-summary.yaml")
         if summary_errors:
             raise ValueError(

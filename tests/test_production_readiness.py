@@ -19,6 +19,7 @@ from smairt.harnesses import ADAPTER_VERSION, harness_status, select_harness
 from smairt.integrity import verify_run
 from smairt.locking import ProjectMutationLock, break_lock, read_lock
 from smairt.models import DataClassification, Decision, ReferenceRecord, RunStatus, SmairtConfig
+from smairt.paper import accepted_runs
 from smairt.project import validate_project
 from smairt.references import add_reference, inspect_pdf
 from smairt.research import create_experiment, record_decision
@@ -32,6 +33,7 @@ from smairt.transactions import (
     transaction_status,
 )
 from smairt.tui import _preflight_destination
+from smairt.utils import sha256_text
 
 
 @pytest.fixture
@@ -433,3 +435,81 @@ def test_existing_checkout_scaffold_rejects_symlinks_and_unmanaged_targets(
         )
     assert readme.read_text() == "laboratory-owned instructions\n"
     assert not (conflicting / "smairt.yaml").exists()
+
+
+def test_runner_preserves_reserve_digests_when_child_mutates_config(project: Path) -> None:
+    """Record pre-run config digests even if the child rewrites config.yaml."""
+    create_experiment(project, title="Digest", purpose="Test reserve provenance")
+    iteration = project / "experiments/EXPERIMENT_001_digest/iterations/ITERATION_001"
+    before = (iteration / "config.yaml").read_text()
+    run = run_experiment(
+        project,
+        experiment_id="EXPERIMENT_001",
+        iteration_id="ITERATION_001",
+        command=[
+            sys.executable,
+            "-c",
+            ("from pathlib import Path\nPath('config.yaml').write_text('seed: mutated\\n')\n"),
+        ],
+    )
+    assert run.config_sha256 is not None
+    assert run.config_sha256 == sha256_text(before)
+    assert (project / run.results_directory / "config.snapshot.yaml").read_text() == before
+    assert run.environment.get("input_drift_after_run", {}).get("config_sha256")
+
+
+def test_symlink_artifact_fails_finalize_and_validate_flags_missing_manifest(
+    project: Path,
+) -> None:
+    """Do not leave a healthy completed run when the integrity manifest cannot be built."""
+    create_experiment(project, title="Symlink", purpose="Test finalize ordering")
+    target = project / "outside-target.txt"
+    target.write_text("payload\n")
+    with pytest.raises(ValueError, match="symlink"):
+        run_experiment(
+            project,
+            experiment_id="EXPERIMENT_001",
+            iteration_id="ITERATION_001",
+            command=[
+                sys.executable,
+                "-c",
+                (
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    f"Path(os.environ['SMAIRT_RESULTS_DIR'], 'link').symlink_to({str(target)!r})\n"
+                ),
+            ],
+        )
+    run_dirs = list((project / "results").glob("EXPERIMENT_001/ITERATION_001/RUN_*"))
+    assert len(run_dirs) == 1
+    run_json = json.loads((run_dirs[0] / "run.json").read_text())
+    assert run_json["status"] == "failed"
+    assert not (run_dirs[0] / "manifest.json").exists()
+    findings = validate_project(project).findings
+    assert any(item["code"] == "run.manifest_missing" for item in findings)
+
+
+def test_accepted_runs_require_decision_backed_selection(project: Path) -> None:
+    """Reject forged selection.yaml files that lack an ACCEPT decision record."""
+    create_experiment(project, title="Selection", purpose="Test acceptance consistency")
+    run = run_experiment(project, experiment_id="EXPERIMENT_001", iteration_id="ITERATION_001")
+    analysis = project / "analysis/EXPERIMENT_001"
+    analysis.mkdir(parents=True, exist_ok=True)
+    (analysis / "selection.yaml").write_text(
+        "experiment_id: EXPERIMENT_001\n"
+        "iteration_id: ITERATION_001\n"
+        f"run_id: {run.run_id}\n"
+        "status: ACCEPTED\n"
+    )
+    with pytest.raises(ValueError, match="decision record"):
+        accepted_runs(project)
+    record_decision(
+        project,
+        experiment_id="EXPERIMENT_001",
+        iteration_id="ITERATION_001",
+        run_id=run.run_id,
+        decision=Decision.ACCEPT,
+        rationale="Fixture acceptance for selection consistency.",
+        decided_by="Researcher",
+    )
+    assert run.run_id in accepted_runs(project)

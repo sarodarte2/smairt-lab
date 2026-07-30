@@ -89,9 +89,18 @@ Never edit a run bundle. Correct the method in a new iteration or append an expl
 
 ## Interpret before accepting evidence
 
+Before ACCEPT on a protocol-required experiment, complete:
+
+1. `result-summary.yaml` in the run bundle (artifact checksums matching outputs)
+2. `analysis/EXPERIMENT_*/ANALYSIS_ITERATION_*.md` with headings
+   `## Observed Results`, `## Interpretation`, and `## Limitations and Confounders`
+3. Integrity verification (`smairt verify --run RUN_<id>`)
+4. Known Git provenance when Git is enabled for the project
+
 Use the run ID printed by `smairt run`:
 
 ```bash
+smairt verify --run RUN_<timestamp> --json
 smairt decision record --experiment EXPERIMENT_001 --iteration ITERATION_001 \
   --run RUN_<timestamp> --decision ACCEPT \
   --rationale "How the observed result met the predefined criterion" \

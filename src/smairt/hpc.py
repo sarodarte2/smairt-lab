@@ -25,7 +25,7 @@ from smairt.models import (
     SmairtConfig,
     utc_now,
 )
-from smairt.runner import _git_capture, _sanitized_command
+from smairt.runner import _git_capture, _resolved_entrypoint, _safe_snapshot, _sanitized_command
 from smairt.science import validate_protocol
 from smairt.utils import (
     atomic_write,
@@ -135,10 +135,16 @@ def submit_slurm(
             profile.host_alias,
             ["mkdir", "-p", execution_dir, output_dir, figure_dir],
         )
-        entrypoint = str(metadata.get("entrypoint", "run.py"))
-        sources = [iteration / "config.yaml", iteration / entrypoint]
+        entrypoint = _resolved_entrypoint(iteration, original, metadata)
+        if entrypoint is None:
+            raise ValueError(
+                "Slurm SSH submit requires an experiment entrypoint contained in the iteration"
+            )
+        sources = [iteration / "config.yaml", entrypoint]
         if protocol.exists():
             sources.append(protocol)
+        for source in sources:
+            ensure_no_symlink(root, source)
         subprocess.run(
             [
                 "scp",
@@ -187,7 +193,11 @@ def submit_slurm(
         )
         write_json(run_dir / "run.json", started.model_dump(mode="json", exclude_none=True))
         if protocol.exists():
-            atomic_write_bytes(run_dir / "protocol.snapshot.yaml", protocol.read_bytes())
+            safe, receipt = _safe_snapshot(protocol.read_bytes(), "protocol.snapshot.yaml")
+            if receipt:
+                write_json(run_dir / "provenance-omissions.json", {"omissions": [receipt]})
+            elif safe is not None:
+                atomic_write_bytes(run_dir / "protocol.snapshot.yaml", safe)
     try:
         submit_script = str(script_path)
         if profile.mode is ComputeMode.SSH:
@@ -228,6 +238,26 @@ def submit_slurm(
         raise
     job_id = output.split(";", 1)[0].strip()
     if not re.fullmatch(r"[0-9]+(?:_[0-9]+)?", job_id):
+        failed = started.model_copy(
+            update={
+                "status": RunStatus.FAILED,
+                "completed_at": utc_now(),
+                "exit_code": 127,
+                "environment": {
+                    **started.environment,
+                    "launch_failed": True,
+                    "invalid_scheduler_job_id": True,
+                },
+            }
+        )
+        with ProjectMutationLock(root, f"slurm invalid job id {run_id}"):
+            atomic_write(
+                run_dir / "run.log",
+                "SMAIRT submitted a Slurm job but could not parse a valid job identifier.\n"
+                f"Raw scheduler output: {output!r}\n",
+            )
+            write_json(run_dir / "run.json", failed.model_dump(mode="json", exclude_none=True))
+            build_manifest(root, run_dir)
         raise RuntimeError("Slurm returned an invalid job identifier")
     job = ComputeJobRecord(
         run_id=run_id,
@@ -286,7 +316,12 @@ def refresh_job(root: Path, run_id: str) -> ComputeJobRecord:
     }
     status = mapping.get(raw.split("+", 1)[0], ComputeJobStatus.UNKNOWN)
     job = job.model_copy(update={"status": status, "updated_at": utc_now()})
-    write_json(path, job.model_dump(mode="json", exclude_none=True))
+    run_dir = path.parent
+    with ProjectMutationLock(root, f"slurm refresh {run_id}"):
+        write_json(path, job.model_dump(mode="json", exclude_none=True))
+        # Rebuild the integrity manifest whenever a hashed receipt changes.
+        if (run_dir / "manifest.json").exists():
+            build_manifest(root, run_dir)
     return job
 
 
