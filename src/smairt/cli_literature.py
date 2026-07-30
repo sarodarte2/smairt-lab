@@ -25,12 +25,15 @@ def search_command(
     query: Annotated[str, typer.Argument()],
     provider: Annotated[str, typer.Option("--provider")] = "openalex",
     limit: Annotated[int, typer.Option("--limit", min=1, max=50)] = 20,
+    confirm_remote: Annotated[bool, typer.Option("--confirm-remote")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Search provisional candidates without importing them."""
     payload = [
         item.model_dump(mode="json", exclude_none=True)
-        for item in literature_search(project_root(), query, limit, provider)
+        for item in literature_search(
+            project_root(), query, limit, provider, confirm_remote=confirm_remote
+        )
     ]
     emit(payload, as_json)
 
@@ -41,12 +44,20 @@ def related_command(
     direction: Annotated[str, typer.Option("--direction")],
     provider: Annotated[str, typer.Option("--provider")] = "openalex",
     limit: Annotated[int, typer.Option("--limit", min=1, max=50)] = 20,
+    confirm_remote: Annotated[bool, typer.Option("--confirm-remote")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """List bounded references or citing works for one indexed DOI."""
     payload = [
         item.model_dump(mode="json", exclude_none=True)
-        for item in literature_related(project_root(), identifier, direction, limit, provider)
+        for item in literature_related(
+            project_root(),
+            identifier,
+            direction,
+            limit,
+            provider,
+            confirm_remote=confirm_remote,
+        )
     ]
     emit(payload, as_json)
 
@@ -55,12 +66,15 @@ def related_command(
 def recommend_command(
     identifier: Annotated[str, typer.Argument()],
     limit: Annotated[int, typer.Option("--limit", min=1, max=50)] = 20,
+    confirm_remote: Annotated[bool, typer.Option("--confirm-remote")] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Recommend provisional Semantic Scholar papers from one project reference."""
     payload = [
         item.model_dump(mode="json", exclude_none=True)
-        for item in literature_recommend(project_root(), identifier, limit)
+        for item in literature_recommend(
+            project_root(), identifier, limit, confirm_remote=confirm_remote
+        )
     ]
     emit(payload, as_json)
 

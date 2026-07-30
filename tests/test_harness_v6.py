@@ -121,6 +121,21 @@ def test_hook_policy_bounds_and_denies_protected_or_human_gate_operations(tmp_pa
     assert codex["hookSpecificOutput"]["permissionDecision"] == "deny"
     cline = hook_response(root, "cline", "PreToolUse", human)
     assert cline["cancel"] is True
+    claim = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "smairt paper claim approve claim-1 --yes"},
+    }
+    assert "human scientific gate" in str(policy_denial(claim)).lower()
+    results_edit = {
+        "tool_name": "Write",
+        "tool_input": {"path": "results/EXPERIMENT_001/ITERATION_001/RUN_1/run.json"},
+    }
+    assert "Immutable" in str(policy_denial(results_edit))
+    selection_edit = {
+        "tool_name": "Edit",
+        "tool_input": {"path": "analysis/EXPERIMENT_001/selection.yaml"},
+    }
+    assert "Immutable" in str(policy_denial(selection_edit))
 
 
 def test_responsive_header_uses_compact_and_wide_branding(monkeypatch) -> None:

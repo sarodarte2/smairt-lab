@@ -81,6 +81,22 @@ def _zotero_allowed(root: Path) -> None:
         raise ValueError("private projects require attributed Zotero MCP confirmation")
 
 
+def _reference_allowed(root: Path) -> None:
+    """Gate project bibliography tools with the same classification posture as Zotero."""
+    config = SmairtConfig.load(root / "smairt.yaml")
+    if config.data.classification is DataClassification.CONTROLLED:
+        raise ValueError("controlled projects cannot expose the reference index through MCP")
+    if config.data.classification is DataClassification.PRIVATE:
+        attestation = config.repository_attestation
+        if not (
+            attestation.acknowledged and attestation.contributor_id and attestation.acknowledged_at
+        ):
+            raise ValueError(
+                "private projects require a repository visibility attestation before "
+                "exposing the reference index through MCP"
+            )
+
+
 def build_server(root: Path) -> Any:
     """Build the exact five-tool server without starting a transport."""
     try:
@@ -97,6 +113,7 @@ def build_server(root: Path) -> Any:
     @server.tool(annotations=read_only)
     def reference_search(query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search bounded project-index metadata; never return PDF or full text."""
+        _reference_allowed(root)
         requested = _limit(limit)
         needle = _query(query).casefold()
         matches = []
@@ -111,6 +128,7 @@ def build_server(root: Path) -> Any:
     @server.tool(annotations=read_only)
     def reference_get(identifier: str) -> dict[str, Any]:
         """Get one project-index metadata record by validated identifier."""
+        _reference_allowed(root)
         return _public_reference(get_reference(root, identifier))
 
     @server.tool(annotations=read_only)

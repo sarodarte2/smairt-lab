@@ -24,7 +24,7 @@ Safety mode describes how aggressively SMAIRT responds:
 | Secrets and private keys | Block in staged or tracked content | Same block |
 | Raw protected data | Block protected paths and formats from Git | Same block with stronger local-only defaults |
 | Protected summaries | Require an attested private repository | Keep local unless explicitly shareable and redaction-confirmed |
-| Remote metadata | Explicit command; protected queries require confirmation | Protected queries denied unless explicitly confirmed |
+| Remote metadata | Explicit command; protected queries require `--confirm-remote` | Protected queries denied unless `--confirm-remote` |
 | Release | Check files, history, secrets, visibility, and provenance | Add fresh private visibility and protected-summary checks |
 | Compliance claim | None | None |
 

@@ -21,11 +21,20 @@ PROTECTED_TOKENS = (
     "api_key",
     "access_token",
 )
-IMMUTABLE_EDIT_TOKENS = ("runs/", "evidence/", ".smairt/transactions/")
+IMMUTABLE_EDIT_TOKENS = (
+    "results/",
+    "evidence/",
+    "selection.yaml",
+    ".smairt/transactions/",
+)
 HUMAN_GATE_COMMANDS = (
     "smairt hypothesis activate",
+    "smairt experiment new",
     "smairt decision record",
-    "smairt paper approve",
+    "smairt paper claim approve",
+    "smairt paper claim reject",
+    "smairt paper evidence review",
+    "smairt paper section review",
     "smairt safety set",
     "smairt contributor use",
     "smairt amend",

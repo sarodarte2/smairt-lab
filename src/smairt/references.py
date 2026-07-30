@@ -968,13 +968,22 @@ def enrich_openalex(
 
 
 def _require_remote_permission(root: Path, confirmed: bool) -> None:
-    """Require explicit consent before Strict protected-project metadata queries."""
+    """Require explicit consent before protected-project remote metadata queries."""
     from smairt.models import SmairtConfig
 
     config = SmairtConfig.load(root / "smairt.yaml")
     protected = config.data.classification.value in {"private", "controlled"}
-    if config.safety_mode == "strict" and protected and not confirmed:
+    if not protected:
+        return
+    if confirmed:
+        return
+    mode = config.safety_mode.value
+    if mode == "strict":
         raise ValueError("Strict protected projects require --confirm-remote for metadata queries")
+    raise ValueError(
+        "Protected projects require --confirm-remote for remote metadata queries "
+        f"(safety mode: {mode})"
+    )
 
 
 def export_references(root: Path, format_name: str) -> str:

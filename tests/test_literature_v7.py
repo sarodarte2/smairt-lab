@@ -12,9 +12,20 @@ import pytest
 from pypdf import PdfWriter
 
 from smairt.integrations import configure_openalex
-from smairt.literature import OpenAlexProvider, literature_access, safe_download_pdf
+from smairt.literature import (
+    OpenAlexProvider,
+    literature_access,
+    literature_search,
+    safe_download_pdf,
+)
 from smairt.local_setup import ConnectionProfile, bind_profile, configure_profile
-from smairt.models import AccessLocation, DataClassification, ReferenceRecord
+from smairt.models import (
+    AccessLocation,
+    DataClassification,
+    ReferenceRecord,
+    SafetyMode,
+    SmairtConfig,
+)
 from smairt.references import (
     add_doi_reference,
     add_reference,
@@ -222,3 +233,23 @@ def test_pdf_names_and_previewed_organizer_preserve_original(tmp_path: Path) -> 
     assert original.is_file()
     assert not legacy.exists()
     assert len(Path(load_index(root)[0].local_path or "").name.encode()) <= 120
+
+
+def test_protected_literature_search_requires_confirm_remote(tmp_path: Path) -> None:
+    """Gate discovery commands for private projects in both standard and strict modes."""
+    root = tmp_path / "private-lit"
+    create_project(
+        root,
+        name="Private Literature",
+        author="Researcher",
+        classification=DataClassification.PRIVATE,
+        initialize_git=False,
+        confirm_contributor=True,
+    )
+    with pytest.raises(ValueError, match="confirm-remote"):
+        literature_search(root, "michaelis menten", confirm_remote=False)
+    config = SmairtConfig.load(root / "smairt.yaml")
+    config.safety_mode = SafetyMode.STRICT
+    (root / "smairt.yaml").write_text(config.to_yaml())
+    with pytest.raises(ValueError, match="confirm-remote"):
+        literature_search(root, "michaelis menten", confirm_remote=False)

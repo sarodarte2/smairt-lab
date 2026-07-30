@@ -476,9 +476,15 @@ def safe_download_pdf(
 
 
 def literature_search(
-    root: Path, query: str, limit: int = 20, provider: str = "openalex"
+    root: Path,
+    query: str,
+    limit: int = 20,
+    provider: str = "openalex",
+    *,
+    confirm_remote: bool = False,
 ) -> list[LiteratureCandidate]:
     """Search one or both bounded discovery providers."""
+    _require_remote_permission(root, confirm_remote)
     if provider == "openalex":
         return OpenAlexProvider(root).search(query, limit)
     if provider == "semantic-scholar":
@@ -504,8 +510,11 @@ def literature_related(
     direction: str,
     limit: int = 20,
     provider: str = "openalex",
+    *,
+    confirm_remote: bool = False,
 ) -> list[LiteratureCandidate]:
     """Discover bounded citation neighbors for one indexed reference."""
+    _require_remote_permission(root, confirm_remote)
     record = get_reference(root, identifier)
     if provider == "openalex":
         return OpenAlexProvider(root).related(record, direction, limit)
@@ -514,8 +523,15 @@ def literature_related(
     raise ValueError("provider must be openalex or semantic-scholar")
 
 
-def literature_recommend(root: Path, identifier: str, limit: int = 20) -> list[LiteratureCandidate]:
+def literature_recommend(
+    root: Path,
+    identifier: str,
+    limit: int = 20,
+    *,
+    confirm_remote: bool = False,
+) -> list[LiteratureCandidate]:
     """Recommend provisional Semantic Scholar candidates from one project reference."""
+    _require_remote_permission(root, confirm_remote)
     return SemanticScholarProvider(root).recommend(get_reference(root, identifier), limit)
 
 

@@ -1409,8 +1409,15 @@ def _references_menu(root: Path) -> None:
                     continue
                 if discovery == "search":
                     discovery_provider = _literature_provider(root, allow_both=True)
+                    confirm_remote = _yes_no(
+                        "Send this search query to a remote literature provider?", True
+                    )
                     candidates = literature_search(
-                        root, _text("Search query"), 20, provider=discovery_provider
+                        root,
+                        _text("Search query"),
+                        20,
+                        provider=discovery_provider,
+                        confirm_remote=confirm_remote,
                     )
                     _browse_literature_candidates(root, candidates)
                 else:
@@ -1424,15 +1431,26 @@ def _references_menu(root: Path) -> None:
                             for record in eligible
                         ],
                     )
+                    confirm_remote = _yes_no(
+                        "Send this reference identifier to a remote literature provider?", True
+                    )
                     if discovery in {"references", "cited-by"}:
                         discovery_provider = _literature_provider(root, allow_both=False)
                         candidates = literature_related(
-                            root, identifier, discovery, 20, provider=discovery_provider
+                            root,
+                            identifier,
+                            discovery,
+                            20,
+                            provider=discovery_provider,
+                            confirm_remote=confirm_remote,
                         )
                         _browse_literature_candidates(root, candidates)
                     elif discovery == "recommend":
                         _browse_literature_candidates(
-                            root, literature_recommend(root, identifier, 20)
+                            root,
+                            literature_recommend(
+                                root, identifier, 20, confirm_remote=confirm_remote
+                            ),
                         )
                     else:
                         access_preview = literature_access(root, identifier)

@@ -21,7 +21,7 @@ from smairt.credentials import (
     set_credential,
 )
 from smairt.harnesses import MCP_TOOL_NAMES, configure_mcp, select_harness
-from smairt.mcp_server import build_server
+from smairt.mcp_server import _reference_allowed, build_server
 from smairt.migrations import apply_migration, rollback_migration
 from smairt.models import (
     DataClassification,
@@ -272,6 +272,21 @@ def test_mcp_public_sdk_and_real_stdio_exclude_private_fields(monkeypatch, tmp_p
             assert [tool.name for tool in tools.tools] == list(MCP_TOOL_NAMES)
 
     asyncio.run(exercise())
+
+
+def test_mcp_reference_tools_block_controlled_projects(tmp_path: Path) -> None:
+    """Keep controlled bibliographies out of the metadata-only MCP surface."""
+    root = tmp_path / "controlled-mcp"
+    create_project(
+        root,
+        name="Controlled MCP",
+        author="Researcher",
+        classification=DataClassification.CONTROLLED,
+        initialize_git=False,
+        confirm_contributor=True,
+    )
+    with pytest.raises(ValueError, match="controlled"):
+        _reference_allowed(root)
 
 
 def test_keyring_locked_and_null_backends_are_typed_and_secret_free(monkeypatch) -> None:
