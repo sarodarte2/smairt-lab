@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ from platformdirs import user_data_path
 from pydantic import ValidationError
 
 from smairt import __version__
+from smairt.messages import describe_validation_error
 from smairt.models import (
     Assistant,
     Capability,
@@ -32,6 +34,7 @@ from smairt.models import (
 )
 from smairt.scaffold import (
     ASSISTANT_POINTERS,
+    ScaffoldConflict,
     active_assets,
     asset_ownership,
     asset_path,
@@ -51,36 +54,92 @@ REQUIRED_DIRECTORIES = (
     "results/figures",
     "prompts",
 )
-PHASE_DIRECTORIES = {
-    StartingPhase.SYNTHETIC: (
-        "data/synthetic",
-        "data/downloaded",
-        "data/real",
-        "experiments/01_synthetic",
-        "experiments/02_downloaded",
-        "experiments/03_real_data",
-    ),
-    StartingPhase.DOWNLOADED: (
-        "data/downloaded",
-        "data/real",
-        "experiments/02_downloaded",
-        "experiments/03_real_data",
-    ),
-    StartingPhase.REAL: ("data/real", "experiments/03_real_data"),
-}
+PHASE_DIRECTORIES = (
+    "data/synthetic",
+    "data/downloaded",
+    "data/real",
+    "experiments/01_synthetic",
+    "experiments/02_downloaded",
+    "experiments/03_real_data",
+)
+"""Every phase directory, present in every project regardless of its starting phase.
+
+Not keyed by phase. `starting_phase` records where work began and `current_phase` records
+where attention is now; neither decides which directories exist, because a project that
+begins with synthetic data still needs somewhere to put real data when it gets there.
+
+This replaced a phase-keyed map whose `downloaded` and `real` entries were unreachable, read
+through a function that took a phase argument and deleted it. The behavior was right and the
+route to it invited the belief that phase controlled layout."""
+_MIT_TEXT = """\
+MIT License
+
+Copyright (c) {year} {holder}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+_BSD_3_CLAUSE_TEXT = """\
+BSD 3-Clause License
+
+Copyright (c) {year}, {holder}
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
 LICENSE_TEXT = {
-    License.MIT: 'MIT License\n\nCopyright (c) {year} {holder}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n',
-    License.BSD_3_CLAUSE: 'BSD 3-Clause License\n\nCopyright (c) {year}, {holder}\nAll rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are met:\n\n1. Redistributions of source code must retain the above copyright notice, this\n   list of conditions and the following disclaimer.\n2. Redistributions in binary form must reproduce the above copyright notice,\n   this list of conditions and the following disclaimer in the documentation\n   and/or other materials provided with the distribution.\n3. Neither the name of the copyright holder nor the names of its contributors\n   may be used to endorse or promote products derived from this software\n   without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"\nAND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\nIMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\nDISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE\nFOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\nDAMAGES.\n',
-    License.APACHE_2_0: 'Apache License\nVersion 2.0, January 2004\nhttp://www.apache.org/licenses/\n\nCopyright {year} {holder}\n\nLicensed under the Apache License, Version 2.0 (the "License");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy of the License at\n\n    http://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an "AS IS" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n',
-    License.GPL_3_0: "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\nCopyright (C) {year} {holder}\n\nThis program is free software: you can redistribute it and/or modify\nit under the terms of the GNU General Public License as published by\nthe Free Software Foundation, either version 3 of the License, or\n(at your option) any later version.\n\nThis program is distributed in the hope that it will be useful,\nbut WITHOUT ANY WARRANTY; without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\nGNU General Public License for more details.\n",
-    License.PROPRIETARY: "All rights reserved.\n\nCopyright (c) {year} {holder}\n\nNo permission is granted to use, copy, modify, distribute, or sublicense this\nproject except with the prior written permission of the copyright holder.\n",
+    License.MIT: _MIT_TEXT,
+    License.BSD_3_CLAUSE: _BSD_3_CLAUSE_TEXT,
 }
+"""The complete official text of each license SMAIRT will write.
+
+Held as readable blocks rather than escaped single lines, because the truncation these
+replaced was invisible when the text was one long `\\n`-joined string. Every entry must be
+the license verbatim: a shortened license is not the license it names, and a `LICENSE` file
+is the one generated artifact whose exact words carry legal effect.
+"""
+
 LICENSE_EXPLANATIONS = {
     License.MIT: "Permissive reuse with attribution and no warranty.",
     License.BSD_3_CLAUSE: "Permissive reuse with attribution and no endorsement.",
-    License.APACHE_2_0: "Permissive reuse with patent terms and notices.",
-    License.GPL_3_0: "Reuse and distribution requires sharing covered source changes.",
-    License.PROPRIETARY: "Reserve reuse rights unless you grant permission.",
 }
 EDITOR_COMMAND = ("code", ".")
 """Opening the workspace in VS Code, which is what launching an extension assistant means."""
@@ -142,8 +201,17 @@ def load_contract(root: Path) -> ProjectContract:
             if match is not None:
                 data["license_year"] = int(match.group(1))
         return ProjectContract.model_validate(data)
-    except (OSError, ValidationError, yaml.YAMLError) as error:
-        raise ProjectError(f"Invalid smairt.yaml: {error}") from error
+    except ValidationError as error:
+        # A contract can be unreadable for a dozen structural reasons at once. Reporting them
+        # as pydantic does means a researcher reads ten stanzas of type tags and a URL to find
+        # out that one file is malformed.
+        raise ProjectError(describe_validation_error(error, source="smairt.yaml")) from error
+    except yaml.YAMLError as error:
+        raise ProjectError(
+            f"smairt.yaml is not valid YAML, so SMAIRT cannot read this project: {error}"
+        ) from error
+    except OSError as error:
+        raise ProjectError(f"Could not read smairt.yaml: {error}") from error
 
 
 def save_contract(root: Path, contract: ProjectContract) -> None:
@@ -304,7 +372,7 @@ def enable_capability(root: Path, name: str) -> str:
             }
         }
     )
-    materialize_template_assets(root, updated, missing_only=True)
+    _materialize(root, updated)
     save_contract(root, updated)
     return f"{_capability_label(name)} support enabled; existing project files were retained."
 
@@ -334,72 +402,23 @@ def _capability_label(name: str) -> str:
     return "Paper" if name == "paper" else "HPC"
 
 
-def _create_paper_assets_safely(root: Path) -> None:
-    materialize_template_assets(root, load_contract(root), missing_only=True)
+def _materialize(root: Path, contract: ProjectContract, *, missing_only: bool = True) -> None:
+    """Write the contract's scaffold, reporting a project-side conflict as a project error.
 
-
-def _create_hpc_assets_safely(root: Path, slug: str) -> None:
-    del slug
-    materialize_template_assets(root, load_contract(root), missing_only=True)
-
-
-def hpc_asset_contents(slug: str) -> dict[str, str]:
-    return {
-        "hpc/README.md": "# HPC Guidance\n\n"
-        "Run `sbatch hpc/slurm_job.sh <experiment-command> [arguments...]` from the project root "
-        "after adapting the scheduler directives to your cluster. Choose a command that uses "
-        "paths created for the project's current phase. SMAIRT does not submit or manage jobs.\n",
-        "hpc/slurm_job.sh": "#!/usr/bin/env bash\n"
-        f"#SBATCH --job-name={slug}\n"
-        "#SBATCH --output=results/logs/%x-%j.out\n\n"
-        "set -eu\n\n"
-        'if [ "$#" -eq 0 ]; then\n'
-        '  echo "Usage: sbatch hpc/slurm_job.sh <experiment-command> [arguments...]" >&2\n'
-        '  echo "Choose a command and paths appropriate for the current project phase." >&2\n'
-        "  exit 2\n"
-        "fi\n\n"
-        '"$@"\n',
-    }
-
-
-def paper_asset_contents() -> dict[str, str]:
-    return {
-        "paper/README.md": "# Paper Workspace\n\n"
-        "Paper support is an optional publication overlay on the standard SMAIRT audit trail. "
-        "Use `paper/analysis/` for publication-focused interpretation and `paper/outline.md` "
-        "for the evolving manuscript structure. Check `capabilities.paper.state` in "
-        "`smairt.yaml`: retained files are researcher-owned history while Paper is inactive.\n",
-        "paper/outline.md": "# Paper Outline\n",
-        "paper/analysis/README.md": "# Paper Analysis\n\n"
-        "Connect results from the standard research workflow to claims in the paper outline.\n",
-    }
-
-
-def phase_asset_contents(phase: StartingPhase) -> dict[str, str]:
-    guidance = {
-        "data/synthetic": "Generated data used to test assumptions before external data is introduced.",
-        "data/downloaded": "Public or benchmark data, with provenance recorded alongside retrieval steps.",
-        "data/real": "Collected or operational data; document access, provenance, and transformations.",
-        "experiments/01_synthetic": "Scripts and notes for experiments against synthetic data.",
-        "experiments/02_downloaded": "Scripts and notes for experiments against downloaded data.",
-        "experiments/03_real_data": "Scripts and notes for experiments against real data.",
-    }
-    return {
-        f"{directory}/README.md": f"# {directory}\n\n{guidance[directory]}\n"
-        for directory in phase_directories(phase)
-    }
+    A file sitting where the scaffold needs a directory is the researcher's own file and a
+    situation they can fix. Letting the scaffold layer's exception travel unchanged made it
+    surface as an unexplained traceback in the middle of enabling a capability.
+    """
+    try:
+        materialize_template_assets(root, contract, missing_only=missing_only)
+    except ScaffoldConflict as error:
+        raise ProjectError(str(error)) from error
 
 
 def _create_directory(path: Path) -> None:
     if path.exists() and not path.is_dir():
         raise ProjectError(f"Cannot create directory because a file exists: {path}")
     path.mkdir(parents=True, exist_ok=True)
-
-
-def _write_if_missing_and_track(root: Path, path: Path, content: str) -> None:
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
 
 
 def update_settings(
@@ -441,7 +460,7 @@ def update_settings(
         updates["assistant"] = assistant
     if phase is not None:
         _require_current_scaffold(contract, "change the current phase")
-        _create_phase_directories_non_destructively(root, phase)
+        _create_phase_directories_non_destructively(root)
         updates["current_phase"] = phase
     if researcher is not None or email is not None:
         current = contract.people["researcher"]
@@ -493,11 +512,16 @@ def update_settings(
         prepare_assistant(root)
 
 
-def _create_phase_directories_non_destructively(root: Path, phase: StartingPhase) -> None:
-    for directory in phase_directories(phase):
+def _create_phase_directories_non_destructively(root: Path) -> None:
+    """Ensure every phase directory and its shipped guidance exists, creating nothing else.
+
+    The guidance comes from the scaffold templates rather than from text repeated here. A
+    second copy wrote different words than the files a project is generated with, so a phase
+    README restored by a phase change did not match the one every other project has.
+    """
+    for directory in PHASE_DIRECTORIES:
         _create_directory(root / directory)
-    for relative, content in phase_asset_contents(phase).items():
-        _write_if_missing_and_track(root, root / relative, content)
+    _materialize(root, load_contract(root))
 
 
 def update_collaborator(root: Path, role: str, name: str, email: str | None) -> None:
@@ -644,7 +668,8 @@ def project_check(root: Path) -> list[CheckIssue]:
             CheckIssue(
                 "scaffold-version-mismatch",
                 "smairt.yaml",
-                f"Project scaffold {contract.scaffold_version} differs from installed SMAIRT {__version__}.",
+                f"Project scaffold {contract.scaffold_version} differs from installed SMAIRT "
+                f"{__version__}. Run `smairt upgrade` to review and apply the difference.",
             )
         )
     for directory in REQUIRED_DIRECTORIES:
@@ -658,7 +683,7 @@ def project_check(root: Path) -> list[CheckIssue]:
                     f"create-directory:{directory}",
                 )
             )
-    for directory in _phase_directories(contract.current_phase):
+    for directory in PHASE_DIRECTORIES:
         if not (root / directory).is_dir():
             issues.append(
                 CheckIssue(
@@ -703,6 +728,7 @@ def project_check(root: Path) -> list[CheckIssue]:
             )
         )
     issues.extend(_outcome_drift_issues(root))
+    issues.extend(_dangling_hypothesis_issues(root))
     issues.extend(_manifest_reconciliation_issues(root, contract))
     if contract.scaffold_version == __version__:
         issues.extend(_managed_file_issues(root, contract))
@@ -776,6 +802,60 @@ def _manifest_reconciliation_issues(root: Path, contract: ProjectContract) -> li
     return issues
 
 
+def _dangling_hypothesis_issues(root: Path) -> list[CheckIssue]:
+    """Report iteration rows naming a hypothesis file the project does not contain.
+
+    The whole value of the record is that one number joins hypothesis, script, log, and
+    analysis. A typo in `--hypothesis` used to write a row pointing at nothing, and the
+    project still reported clean — so the broken link surfaced months later, if ever.
+
+    `new_iteration.py` now refuses an unknown hypothesis, but a project may already carry
+    such a row, and a hypothesis file can be renamed or deleted afterwards. This is a
+    filename comparison and nothing more: whether a hypothesis is well posed is the
+    researcher's judgment. There is no repair, because only the researcher knows whether the
+    reference or the filename is the mistake.
+    """
+    log_path = root / "analysis" / "ITERATION_LOG.md"
+    if not log_path.is_file():
+        return []
+    relative = log_path.relative_to(root).as_posix()
+    existing = {path.stem for path in (root / "hypotheses").glob("HYPOTHESIS_[0-9]*.md")}
+    issues: list[CheckIssue] = []
+    for number, referenced in sorted(_iteration_hypotheses(log_path.read_text()).items()):
+        missing = sorted(name for name in referenced if name not in existing)
+        if missing:
+            issues.append(
+                CheckIssue(
+                    "dangling-hypothesis-reference",
+                    relative,
+                    f"Iteration {number} names a hypothesis with no file: {', '.join(missing)}.",
+                )
+            )
+    return issues
+
+
+def _iteration_hypotheses(content: str) -> dict[str, set[str]]:
+    """Return the hypothesis identifiers each iteration's state row references.
+
+    Read from the state table only. The outcome history has a different shape and records
+    prose rather than references.
+    """
+    references: dict[str, set[str]] = {}
+    in_history = False
+    for line in content.splitlines():
+        if line.startswith("## "):
+            in_history = line.strip() == "## Outcome history"
+            continue
+        if in_history or not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and re.fullmatch(r"\d+", cells[0]):
+            named = set(re.findall(r"HYPOTHESIS_\d+", cells[3]))
+            if named:
+                references[cells[0]] = named
+    return references
+
+
 def _iteration_log_records(content: str) -> tuple[dict[str, str], dict[str, str]]:
     """Return each iteration's stated outcome and its most recently recorded one.
 
@@ -796,15 +876,6 @@ def _iteration_log_records(content: str) -> tuple[dict[str, str], dict[str, str]
             elif not in_history and re.fullmatch(r"\d+", cells[0]):
                 rows[cells[0]] = cells[-1]
     return rows, history
-
-
-def _phase_directories(phase: StartingPhase) -> tuple[str, ...]:
-    return phase_directories(phase)
-
-
-def phase_directories(phase: StartingPhase) -> tuple[str, ...]:
-    del phase
-    return PHASE_DIRECTORIES[StartingPhase.SYNTHETIC]
 
 
 def _managed_file_issues(root: Path, contract: ProjectContract) -> list[CheckIssue]:
@@ -889,12 +960,10 @@ def apply_repairs(root: Path, identifiers: list[str]) -> list[CheckIssue]:
         elif issue.repair == "create-assistant-pointer":
             prepare_assistant(root)
         elif issue.repair.startswith("restore-capability:"):
-            name = issue.repair.removeprefix("restore-capability:")
-            contract = load_contract(root)
-            if name == "paper":
-                _create_paper_assets_safely(root)
-            else:
-                _create_hpc_assets_safely(root, contract.project.slug)
+            # Both capabilities restore the same way: write whatever the contract's enabled
+            # capabilities declare and is missing. The two wrappers this replaced differed
+            # only in an argument one of them deleted.
+            _materialize(root, load_contract(root))
     return selected
 
 
@@ -950,6 +1019,206 @@ def managed_asset_paths(root: Path) -> list[str]:
     return sorted(managed_asset_contents(root))
 
 
+@dataclass(frozen=True)
+class UpgradeChange:
+    """One tool-owned asset an upgrade would write, create, or leave alone."""
+
+    path: str
+    action: str
+    """One of `update`, `create`, `unchanged`, `preserve`, or `outside`."""
+
+    @property
+    def writes(self) -> bool:
+        return self.action in {"update", "create"}
+
+
+@dataclass(frozen=True)
+class UpgradePlan:
+    """What moving a project onto the installed scaffold version would do.
+
+    Every entry is derived from the same rendering the write itself uses, so the preview
+    cannot describe an operation other than the one that would run.
+    """
+
+    from_version: str
+    to_version: str
+    changes: tuple[UpgradeChange, ...]
+
+    @property
+    def is_current(self) -> bool:
+        return self.from_version == self.to_version
+
+    @property
+    def updates(self) -> tuple[UpgradeChange, ...]:
+        return tuple(change for change in self.changes if change.action == "update")
+
+    @property
+    def creates(self) -> tuple[UpgradeChange, ...]:
+        return tuple(change for change in self.changes if change.action == "create")
+
+    @property
+    def preserved(self) -> tuple[UpgradeChange, ...]:
+        """Assets that differ from the installed version and are kept exactly as they are.
+
+        Deliberately not called "researcher-modified": a difference in an editable starter may
+        be the researcher's edit or a change the newer scaffold made to the starter itself, and
+        SMAIRT cannot tell those apart.
+        """
+        return tuple(change for change in self.changes if change.action == "preserve")
+
+    @property
+    def outside(self) -> tuple[UpgradeChange, ...]:
+        """Managed paths that resolve outside the project and are therefore never touched."""
+        return tuple(change for change in self.changes if change.action == "outside")
+
+    @property
+    def unchanged(self) -> tuple[UpgradeChange, ...]:
+        return tuple(change for change in self.changes if change.action == "unchanged")
+
+    @property
+    def writes_nothing(self) -> bool:
+        return not any(change.writes for change in self.changes)
+
+
+def upgrade_plan(root: Path) -> UpgradePlan:
+    """Describe what upgrading this project to the installed version would change.
+
+    Only tool-owned assets are considered, and a difference in anything the package does not
+    own is reported as kept rather than rewritten. Researcher work is never in this plan and
+    is never written by an upgrade: the blueprint classifies it as `researcher-work`, and
+    `_managed_assets_for()` excludes it.
+
+    This exists because tying a project to its recorded scaffold version, as ADR 0001
+    requires, left every project created by an earlier release unable to change its own
+    settings, capabilities, or structure. Refusing a mutation is correct; refusing it with
+    no route forward makes the tool read-only the moment it is updated.
+    """
+    contract = load_contract(root)
+    # Rendered from the contract as it will be after the version moves, so an asset that
+    # only exists in the newer scaffold appears as a creation rather than being missed.
+    projected = contract.model_copy(update={"scaffold_version": __version__})
+    assets = _managed_assets_for(projected)
+    ownership = asset_ownership(projected)
+    changes: list[UpgradeChange] = []
+    for relative, expected in sorted(assets.items()):
+        path = root / relative
+        if _escapes_project(root, relative):
+            # A managed path that reaches outside the project, through a symlinked file or a
+            # symlinked parent, is never written or read. Following it would let an upgrade
+            # modify a file that is not part of this project at all.
+            changes.append(UpgradeChange(relative, "outside"))
+            continue
+        if not path.exists():
+            changes.append(UpgradeChange(relative, "create"))
+            continue
+        current = path.read_text()
+        if current == expected:
+            changes.append(UpgradeChange(relative, "unchanged"))
+        elif ownership[relative] == "tool-guidance":
+            changes.append(UpgradeChange(relative, "update"))
+        else:
+            # Anything the package does not own is kept. An editable starter is meant to be
+            # edited, so a difference may be the researcher's work or a change the newer
+            # scaffold made to the starter; SMAIRT cannot tell those apart, and keeping the
+            # file is correct either way.
+            changes.append(UpgradeChange(relative, "preserve"))
+    return UpgradePlan(contract.scaffold_version, __version__, tuple(changes))
+
+
+def _escapes_project(root: Path, relative: str) -> bool:
+    """Report whether a managed path resolves outside the project directory.
+
+    Blueprint paths are validated as lexically safe, which says nothing about the filesystem:
+    a researcher, a sync client, or a build step can replace any managed file or one of its
+    parent directories with a symlink. `write_text` follows both, so without this check an
+    upgrade could rewrite an arbitrary file elsewhere on the machine — verified by pointing
+    `docs/12_STEPS.md` at an unrelated file and watching an upgrade destroy it.
+
+    A path that does not exist yet is judged by its nearest existing ancestor, so a dangling
+    symlink cannot be used to create a file outside the project either.
+    """
+    try:
+        anchor = root.resolve(strict=True)
+    except OSError:
+        return True
+    candidate = root / relative
+    existing = candidate
+    while not existing.exists() and existing != root:
+        existing = existing.parent
+    try:
+        resolved = existing.resolve(strict=True)
+    except OSError:
+        return True
+    return resolved != anchor and anchor not in resolved.parents
+
+
+def apply_upgrade(root: Path) -> UpgradePlan:
+    """Move the project onto the installed scaffold version.
+
+    Writes exactly what the plan reports as a write, and nothing else. Earlier this also ran
+    a general materialize pass afterwards, which created any missing active asset — including
+    the blueprint's `researcher-work` records. That meant a researcher who had deliberately
+    deleted `analysis/BREADCRUMB_TRAIL.md` silently got a fresh package template back, from an
+    operation whose preview never mentioned the file. A preview that omits a write is not a
+    preview, so the pass is gone.
+
+    Each file is written to a temporary neighbour and moved into place, so an interruption or
+    a full disk leaves the previous content intact rather than a half-written file. The
+    contract is saved last, so an interrupted upgrade stays on its old version and the same
+    command can simply be run again.
+    """
+    contract = load_contract(root)
+    plan = upgrade_plan(root)
+    if plan.is_current:
+        raise ProjectError(
+            f"Project is already on the installed SMAIRT {__version__}; nothing to upgrade."
+        )
+    projected = contract.model_copy(update={"scaffold_version": __version__})
+    assets = _managed_assets_for(projected)
+    for change in plan.changes:
+        if not change.writes:
+            continue
+        if _escapes_project(root, change.path):
+            # Re-checked immediately before writing, because the plan was built earlier and a
+            # path can be replaced with a symlink in between.
+            raise ProjectError(
+                f"{change.path} resolves outside the project, so SMAIRT will not write it. "
+                "Replace the symbolic link with an ordinary file and run the upgrade again."
+            )
+        _replace_atomically(root / change.path, assets[change.path])
+    save_contract(root, projected)
+    return plan
+
+
+def _replace_atomically(path: Path, content: str) -> None:
+    """Write content to path so that a failure leaves the previous file intact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.smairt-tmp")
+    try:
+        temporary.write_text(content)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _managed_assets_for(contract: ProjectContract) -> dict[str, str]:
+    """Return tool-owned asset content for a contract that is not yet saved.
+
+    `managed_asset_contents()` reloads the contract from disk, which cannot describe a
+    version the project has not moved to yet. This renders the same assets from a projected
+    contract so the preview and the write agree on what the upgraded project contains.
+    """
+    assets = render_template_assets(contract)
+    ownership = asset_ownership(contract)
+    assets = {
+        relative: content
+        for relative, content in assets.items()
+        if ownership[relative] != "researcher-work"
+    }
+    _add_contract_derived_assets(assets, contract)
+    return assets
+
+
 def next_workflow_action(root: Path) -> tuple[str, str]:
     """Return what the project is missing next, and the command that addresses it.
 
@@ -971,12 +1240,12 @@ def next_workflow_action(root: Path) -> tuple[str, str]:
     if not sorted((root / "hypotheses").glob("HYPOTHESIS_[0-9]*.md")):
         return (
             "No hypothesis yet",
-            "python scripts/new_track.py '<the question>' <phase>",
+            "python3 scripts/new_track.py '<the question>' <phase>",
         )
     if not sorted((root / "experiments").glob("*/script_*.py")):
         return (
             "Hypothesis recorded, no iteration yet",
-            "commit the criteria, then python scripts/new_iteration.py",
+            "commit the criteria, then python3 scripts/new_iteration.py",
         )
     uninterpreted = _iterations_missing(root, "analysis/ANALYSIS_{:02d}.md")
     if uninterpreted:
@@ -990,11 +1259,11 @@ def next_workflow_action(root: Path) -> tuple[str, str]:
         listed = ", ".join(f"{number:02d}" for number in unrecorded)
         return (
             f"Interpreted but the outcome is not recorded: {listed}",
-            "python scripts/record_outcome.py NN --outcome '...'",
+            "python3 scripts/record_outcome.py NN --outcome '...'",
         )
     return (
         "Every iteration is interpreted and recorded",
-        "python scripts/new_iteration.py for the next attempt, or select_result.py to report one",
+        "python3 scripts/new_iteration.py for the next attempt, or select_result.py to report one",
     )
 
 
@@ -1055,6 +1324,12 @@ def managed_asset_contents(root: Path, *, include_inactive: bool = False) -> dic
         for relative, content in assets.items()
         if ownership[relative] != "researcher-work"
     }
+    _add_contract_derived_assets(assets, contract)
+    return assets
+
+
+def _add_contract_derived_assets(assets: dict[str, str], contract: ProjectContract) -> None:
+    """Add the assets rendered from the contract rather than from a template file."""
     assets["LICENSE"] = _render_license(
         contract.license, contract.people["researcher"].name, contract.license_year
     )
@@ -1062,14 +1337,33 @@ def managed_asset_contents(root: Path, *, include_inactive: bool = False) -> dic
         "# SMAIRT AI Context\n\nRead `prompts/AI_CONTEXT.md` before working in this project.\n"
     )
     _apply_contract_conventions(assets, contract)
-    return assets
+
+
+def require_upgradable(root: Path, action: str) -> None:
+    """Refuse an action that a scaffold-version difference blocks, before listing anything.
+
+    Commands that preview before writing have to check this at the point they start
+    describing the operation, not only at the point they would write. `smairt repair` on an
+    out-of-date project used to report "No safe repairs are available" and exit 0 while every
+    repair was blocked, and `smairt regenerate` listed all forty-three assets as eligible
+    before refusing on confirm. Both statements were false in a way that reads as success.
+    """
+    _require_current_scaffold(load_contract(root), action)
 
 
 def _require_current_scaffold(contract: ProjectContract, action: str) -> None:
+    """Refuse a package-owned mutation on an out-of-date project, and say what to run.
+
+    ADR 0001 ties a project to its recorded scaffold version, so refusing here is correct.
+    Refusing without naming a route forward is not: it left every project created by an
+    earlier release unable to change its settings, capabilities, or structure, with the only
+    documented answer being to start a new project.
+    """
     if contract.scaffold_version != __version__:
         raise ProjectError(
             f"Cannot {action}: project scaffold {contract.scaffold_version} differs from installed "
-            f"SMAIRT {__version__}. An explicit upgrade flow is not available yet."
+            f"SMAIRT {__version__}. Run `smairt upgrade` to review the changes and move this "
+            "project onto the installed version; researcher work is never rewritten."
         )
 
 

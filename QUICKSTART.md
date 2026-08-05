@@ -1,6 +1,6 @@
 # SMAIRT Quick Start
 
-SMAIRT V0.1 creates a local research workspace for a coding assistant. It is
+SMAIRT creates a local research workspace for a coding assistant. It is
 supported on macOS, Linux, and WSL with Python 3.11 or newer. Native Windows is
 deferred; use WSL.
 
@@ -87,6 +87,11 @@ smairt settings . --experience advanced --no-motion
 Project Check is read-only. If it reports a deterministic structural repair,
 review it first with `smairt repair .`, then apply only the chosen repair with
 `smairt repair . --select REPAIR --confirm`.
+
+If Project Check reports that the project's scaffold version differs from the
+installed SMAIRT, review the difference with `smairt upgrade .` and apply it with
+`smairt upgrade . --confirm`. The preview writes nothing, and an upgrade never
+rewrites your own work or a starter file you have edited.
 
 ## Legacy Automation
 

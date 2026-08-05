@@ -1,6 +1,6 @@
 # SMAIRT: Scientific Method with AI Research Toolkit
 
-SMAIRT V0.1 creates readable, hypothesis-driven scientific research workspaces
+SMAIRT creates readable, hypothesis-driven scientific research workspaces
 for coding assistants. The installed `smairt` command is the supported project
 creation path. It supports macOS, Linux, and Windows through WSL; native
 Windows support is deferred.
@@ -26,7 +26,7 @@ smairt --version
 ```
 
 Use `uv tool install --force .` or `pipx reinstall smairt` after updating your
-checkout. Native Windows is not supported in V0.1; use WSL instead.
+checkout. Native Windows is not supported; use WSL instead.
 
 ## Create A Project
 
@@ -120,12 +120,22 @@ brackets, and either the token or the number selects it:
 Tokens are the contract; numbers are a convenience that may be renumbered when
 a menu is regrouped, so scripts should prefer tokens.
 
+Every command uses the same three exit codes, so a script can tell the cases
+apart without reading messages:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The command did what it said. |
+| `1` | The project was found, and the operation failed or reported findings. |
+| `2` | The command could not be carried out: no project there, or unusable arguments. |
+
 Stable scriptable commands include:
 
 ```bash
 smairt open /path/to/project
 smairt check /path/to/project --json
 smairt repair /path/to/project
+smairt upgrade /path/to/project
 smairt paper enable /path/to/project
 smairt hpc disable /path/to/project
 smairt settings /path/to/project --experience advanced --no-motion
@@ -140,6 +150,30 @@ rendering the write itself uses, and writes nothing until that preview is
 accepted. Paper and HPC deactivation never deletes project files. Motion is
 enabled only for interactive terminals and can be disabled locally with
 `--no-motion`; it is suppressed for tests, redirected output, JSON, and CI.
+
+## Upgrading An Existing Project
+
+A project records the scaffold version that made it. When you update SMAIRT, an
+existing project reports `scaffold-version-mismatch` and package-owned changes
+wait for an explicit upgrade:
+
+```bash
+smairt upgrade /path/to/project            # preview; writes nothing
+smairt upgrade /path/to/project --confirm  # apply
+```
+
+The preview lists exactly which tool-owned guidance would be rewritten, which
+files would be created, and which files are kept untouched. It is rendered from
+the same contract the write uses, so it cannot describe a different operation.
+Researcher work is never read, rewritten, or judged, and a starter file that
+differs from the installed text is kept as it is.
+
+A managed path that resolves outside the project, through a symbolic link on the
+file or on one of its parent directories, is reported and never written. Each
+file is replaced atomically, so a failure partway leaves the previous content
+intact rather than a half-written file, and the project version moves last, so an
+interrupted upgrade stays on its old version and the same command can be run
+again.
 
 Advanced Mode adds one `Advanced ▸` row that opens contract inspection, verbose
 Project Check, managed-asset regeneration, convention controls, and detected
@@ -182,14 +216,22 @@ Cookiecutter implementations are retained under `legacy/cookiecutter/` only as
 unsupported historical references. They are not packaged, tested, or supported
 generation paths. Use `smairt new` for every new project and automation flow.
 
-## V0.1 Limits
+## Current Limits
 
 - Existing folders without `smairt.yaml` are not adopted or migrated.
 - Project Check diagnoses structure and configuration; it does not inspect
   scientific correctness or modify researcher-authored content.
-- Repairs and regeneration are limited to deterministic, tool-owned assets.
+- Repairs, regeneration, and upgrades are limited to deterministic, tool-owned
+  assets. An upgrade never rewrites researcher work or a modified starter.
 - HPC support supplies guidance and a template, not scheduler integration.
 - Native Windows support is deferred.
+- Demos under `demos/` show a superseded workflow. Their scientific reasoning
+  still holds; their commands and directory layouts do not.
+
+## Changes
+
+[CHANGELOG.md](CHANGELOG.md) records what changed in each version and what an
+existing project needs to do about it.
 
 ## Development
 
@@ -214,8 +256,8 @@ uv run mypy src tests
 uv run pytest tests/test_cli.py
 uv run pytest
 uv build
-uv run python scripts/smoke_install.py --artifact dist/smairt-0.4.0-py3-none-any.whl --workspace .smoke/wheel
-uv run python scripts/smoke_install.py --artifact dist/smairt-0.4.0.tar.gz --workspace .smoke/sdist
+uv run python scripts/smoke_install.py --artifact dist --kind wheel --workspace .smoke/wheel
+uv run python scripts/smoke_install.py --artifact dist --kind sdist --workspace .smoke/sdist
 ```
 
 GitHub Actions runs these gates on Ubuntu and macOS with Python 3.11, 3.12, and

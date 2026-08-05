@@ -16,6 +16,8 @@ from pathlib import Path
 
 import yaml
 
+from smairt import __version__
+
 
 def installed_smairt() -> Path:
     return Path(sys.executable).with_name("smairt")
@@ -42,7 +44,7 @@ def test_installed_command_reports_its_version() -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "smairt 0.4.0"
+    assert result.stdout.strip() == f"smairt {__version__}"
 
 
 def test_invalid_slug_exits_cleanly_without_creating_a_project(tmp_path: Path) -> None:
@@ -71,8 +73,12 @@ def test_invalid_slug_exits_cleanly_without_creating_a_project(tmp_path: Path) -
         text=True,
     )
 
-    assert result.returncode == 1
-    assert "Slug must start with a lowercase letter" in result.stderr
+    # Exit 2: the command could not be carried out as asked, rather than an operation that
+    # ran and failed. The message states the rule and offers a slug that would work.
+    assert result.returncode == 2
+    assert "project slug" in result.stderr
+    assert "lowercase letter" in result.stderr
+    assert "For the slug, try: invalid_slug" in result.stderr
     assert not destination.exists()
 
 
@@ -145,7 +151,7 @@ def test_installed_command_creates_a_project_with_a_versioned_contract(
     metadata = yaml.safe_load((destination / "smairt.yaml").read_text())
     assert metadata == {
         "schema_version": 1,
-        "scaffold_version": "0.4.0",
+        "scaffold_version": __version__,
         "project": {
             "name": "Protein Study",
             "slug": "protein_study",
@@ -296,6 +302,18 @@ def test_hpc_guidance_is_a_phase_independent_editable_template(tmp_path: Path) -
 def test_generated_script_captures_stdout_stderr_warnings_and_tracebacks(tmp_path: Path) -> None:
     destination = tmp_path / "logging"
     assert create_project(destination).returncode == 0
+    # The hypothesis has to exist before an iteration may reference it, so that the number
+    # joining hypothesis, script, log, and analysis cannot point at nothing.
+    assert (
+        subprocess.run(
+            [sys.executable, "scripts/new_track.py", "Output is captured", "synthetic"],
+            cwd=destination,
+            check=False,
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
     created = subprocess.run(
         [
             sys.executable,
@@ -379,6 +397,16 @@ def test_generated_script_records_provenance_and_never_reuses_a_log_path(tmp_pat
     ).stdout.strip()
     input_path = destination / "data" / "synthetic" / "sample.txt"
     input_path.write_text("identity matters\n")
+    assert (
+        subprocess.run(
+            [sys.executable, "scripts/new_track.py", "Runs are repeatable", "synthetic"],
+            cwd=destination,
+            check=False,
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
 
     created = subprocess.run(
         [
@@ -493,7 +521,10 @@ def test_existing_destination_is_never_overwritten_or_partially_exposed(
     result = create_project(destination)
 
     assert result.returncode == 1
-    assert result.stderr == f"Error: Destination is not empty: {destination}\n"
+    assert result.stderr == (
+        f"Error: Destination already contains files, so SMAIRT will not write into it: "
+        f"{destination}\n"
+    )
     assert preserved.read_text() == "do not overwrite"
     assert "smairt.yaml" not in paths(destination)
     assert not list(tmp_path.glob(".occupied.smairt-*"))
@@ -506,7 +537,7 @@ def test_dangling_symlink_destination_is_never_replaced(tmp_path: Path) -> None:
     result = create_project(destination)
 
     assert result.returncode == 1
-    assert "Destination is not empty" in result.stderr
+    assert "symbolic link" in result.stderr
     assert destination.is_symlink()
 
 
@@ -735,7 +766,7 @@ def test_settings_license_check_and_repair_are_guarded(tmp_path: Path) -> None:
         text=True,
     )
     preview = subprocess.run(
-        [str(installed_smairt()), "settings", str(destination), "--license", "Apache-2.0"],
+        [str(installed_smairt()), "settings", str(destination), "--license", "BSD-3-Clause"],
         check=False,
         capture_output=True,
         text=True,
@@ -746,7 +777,7 @@ def test_settings_license_check_and_repair_are_guarded(tmp_path: Path) -> None:
             "settings",
             str(destination),
             "--license",
-            "Apache-2.0",
+            "BSD-3-Clause",
             "--confirm-license",
         ],
         check=False,
@@ -817,7 +848,7 @@ def test_settings_license_check_and_repair_are_guarded(tmp_path: Path) -> None:
     assert "Preview:" in preview.stdout
     assert "No license change made" in preview.stdout
     assert confirmed.returncode == 0, confirmed.stderr
-    assert "License changed to Apache-2.0." in confirmed.stdout
+    assert "License changed to BSD-3-Clause." in confirmed.stdout
     assert refused.returncode == 1
     assert "will not replace custom legal text" in refused.stderr
     assert check_before.returncode == 1
@@ -850,7 +881,7 @@ def test_license_change_updates_managed_asset_and_renaming_researcher_is_not_a_l
             "settings",
             str(destination),
             "--license",
-            "Apache-2.0",
+            "BSD-3-Clause",
             "--confirm-license",
         ],
         check=False,
@@ -876,7 +907,7 @@ def test_license_change_updates_managed_asset_and_renaming_researcher_is_not_a_l
     assert renamed.returncode == 0, renamed.stderr
     assert changed.returncode == 0, changed.stderr
     assert regenerated.returncode == 0, regenerated.stderr
-    assert "Apache License" in license_path.read_text()
+    assert "BSD 3-Clause License" in license_path.read_text()
     assert "Renamed Researcher" in license_path.read_text()
     checked = subprocess.run(
         [str(installed_smairt()), "check", str(destination), "--json"],
@@ -1962,13 +1993,13 @@ def test_interactive_wizard_reconfirms_a_license_changed_during_final_review(
     result = run_interactive_new(
         wizard_answers(
             destination,
-            review_action="license\n3\ncreate\nyes",
+            review_action="license\n2\ncreate\nyes",
         )
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Apache-2.0 controls how others may use this project" in result.stdout
-    assert yaml.safe_load((destination / "smairt.yaml").read_text())["license"] == "Apache-2.0"
+    assert "BSD-3-Clause controls how others may use this project" in result.stdout
+    assert yaml.safe_load((destination / "smairt.yaml").read_text())["license"] == "BSD-3-Clause"
 
 
 def test_saved_motion_preference_controls_a_project_dashboard_tty(tmp_path: Path) -> None:
@@ -2045,7 +2076,7 @@ def test_interactive_wizard_validates_destination_before_final_review(tmp_path: 
     )
 
     assert result.returncode == 1
-    assert "Destination is not empty" in result.stdout
+    assert "already contains files" in result.stdout
     assert preserved.read_text() == "keep this"
     assert not (destination / "smairt.yaml").exists()
 

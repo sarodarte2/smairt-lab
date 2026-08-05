@@ -1,6 +1,6 @@
 # Contributing To SMAIRT
 
-SMAIRT V0.1 is an installable research-workspace generator. The supported
+SMAIRT is an installable research-workspace generator. The supported
 development platforms are macOS, Linux, and WSL with Python 3.11 through 3.13.
 Native Windows support is deferred.
 
@@ -26,8 +26,8 @@ uv run mypy src tests
 uv run pytest tests/test_cli.py
 uv run pytest
 uv build
-uv run python scripts/smoke_install.py --artifact dist/smairt-0.4.0-py3-none-any.whl --workspace .smoke/wheel
-uv run python scripts/smoke_install.py --artifact dist/smairt-0.4.0.tar.gz --workspace .smoke/sdist
+uv run python scripts/smoke_install.py --artifact dist --kind wheel --workspace .smoke/wheel
+uv run python scripts/smoke_install.py --artifact dist --kind sdist --workspace .smoke/sdist
 ```
 
 The focused suite exercises the installed command seam.

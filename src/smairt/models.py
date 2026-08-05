@@ -6,6 +6,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from smairt import __version__
+
 
 class StartingPhase(StrEnum):
     SYNTHETIC = "synthetic"
@@ -23,11 +25,17 @@ class Assistant(StrEnum):
 
 
 class License(StrEnum):
+    """The licenses SMAIRT will write for a project.
+
+    Only licenses whose complete official text SMAIRT ships are offered. A truncated
+    license is not the license it names, so an abbreviated Apache-2.0, GPL-3.0, or
+    bespoke proprietary notice was removed rather than shortened. A researcher who
+    needs one of those writes `LICENSE` themselves; `smairt check` reports a
+    researcher-authored `LICENSE` as modified and never replaces it.
+    """
+
     MIT = "MIT"
     BSD_3_CLAUSE = "BSD-3-Clause"
-    APACHE_2_0 = "Apache-2.0"
-    GPL_3_0 = "GPL-3.0"
-    PROPRIETARY = "proprietary"
 
 
 class CapabilityState(StrEnum):
@@ -69,6 +77,31 @@ class RigorSettings(BaseModel):
     track_per_probe_status: bool = False
 
 
+_TEMPLATE_MARKERS = ("{{", "}}", "{%", "%}")
+
+
+def reject_template_markers(value: str) -> str:
+    """Refuse text that would leave a template marker in a generated file.
+
+    Generated guidance is rendered from Jinja templates, and `smairt check` reports any
+    managed file still containing `{{` or `}}` as an unresolved token. Substituted metadata
+    was not screened, so a project named `Study {{ n }}` was created successfully and then
+    immediately failed its own check with five errors about files the researcher never
+    touched. Refusing at the point of entry is the only place the message can name the value
+    that caused it.
+
+    The message is phrased without repeating the field name, because the reporting layer
+    already prefixes each problem with the field it belongs to.
+    """
+    for marker in _TEMPLATE_MARKERS:
+        if marker in value:
+            raise ValueError(
+                f"cannot contain {marker}, because SMAIRT renders project files from templates "
+                "and would leave that text unresolved. Remove the braces."
+            )
+    return value
+
+
 class ProjectIdentity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -89,9 +122,26 @@ class ProjectIdentity(BaseModel):
             raise ValueError(message)
         return value
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return reject_template_markers(value)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        return reject_template_markers(value)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, value: str) -> str:
+        return reject_template_markers(value)
+
     @field_validator("research_question")
     @classmethod
     def normalize_question(cls, value: str | None) -> str | None:
+        if value:
+            reject_template_markers(value)
         return value or None
 
 
@@ -100,6 +150,11 @@ class Researcher(BaseModel):
 
     name: str = Field(min_length=1)
     email: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return reject_template_markers(value)
 
     @field_validator("email")
     @classmethod
@@ -130,7 +185,14 @@ class ProjectContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = 1
-    scaffold_version: str = "0.4.0"
+    scaffold_version: str = __version__
+    """The installed version that generated this project.
+
+    Derived from `__version__` rather than restated, because `project_check()` decides
+    whether a project is current by comparing this string to the installed version. When
+    the two were maintained separately, bumping one and forgetting the other made every
+    freshly generated project fail its own check.
+    """
     project: ProjectIdentity
     people: dict[str, Researcher]
     assistant: Assistant
