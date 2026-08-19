@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import NoReturn
 
 import typer
 
 from smairt import __version__
+from smairt import check as check_module
 from smairt import index as index_module
 from smairt import project as project_module
 from smairt import units as units_module
@@ -19,7 +21,7 @@ app = typer.Typer(
     help="Create and manage SMAIRT research workspaces.",
 )
 
-STUB_COMMANDS = ("check", "status", "connect")
+STUB_COMMANDS = ("status", "connect")
 
 
 def _version_callback(value: bool) -> None:
@@ -117,9 +119,19 @@ def new(
 
 
 @app.command()
-def check() -> None:
-    """Check a project's state contract. Not yet implemented."""
-    _stub("check")
+def check(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of human-readable text."
+    ),
+) -> None:
+    """Check a project's state contract: frontmatter, evidence, drift, and more."""
+    root = _require_project_root("check")
+    report = check_module.run_checks(root)
+    if json_output:
+        typer.echo(json.dumps(check_module.to_json(report), indent=2))
+    else:
+        typer.echo(check_module.render_human(report))
+    raise typer.Exit(code=report.exit_code)
 
 
 @app.command()

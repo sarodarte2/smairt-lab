@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from typer.testing import CliRunner
 
 from smairt import __version__
 from smairt.cli import STUB_COMMANDS, app
+from smairt.project import Harness, create_project
 
 runner = CliRunner()
 
@@ -53,7 +56,7 @@ def test_help_lists_the_full_command_surface() -> None:
     )
 
     assert result.returncode == 0
-    for command in (*STUB_COMMANDS, "new", "unit", "index"):
+    for command in (*STUB_COMMANDS, "new", "unit", "index", "check"):
         assert command in result.stdout
     for retired in ("open", "repair", "settings", "inspect", "regenerate", "paper", "hpc"):
         assert retired not in result.stdout
@@ -127,3 +130,73 @@ def test_new_prompts_only_for_missing_fields(
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "prompted_project" / "smairt.yaml").is_file()
+
+
+def _check_project(tmp_path: Path) -> Path:
+    root = tmp_path / "project"
+    create_project(
+        root,
+        name="CLI Check Project",
+        researcher="Ada Lovelace",
+        description="Exercises the smairt check command surface.",
+        harness=Harness.none,
+        created=date.today(),
+        scaffold_version="0.0.0-test",
+    )
+    return root
+
+
+def test_cli_check_exits_zero_on_a_clean_fresh_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _check_project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["check"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_cli_check_refuses_outside_a_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["check"])
+
+    assert result.exit_code != 0
+    assert "not a SMAIRT project" in result.output
+
+
+def test_cli_check_json_output_parses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _check_project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["check", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["findings"] == []
+    assert "summary" in payload
+
+
+def test_cli_check_reports_status_drift_after_a_unit_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from smairt.units import create_stage
+
+    root = _check_project(tmp_path)
+    create_stage(root, "Alignment", created=date.today())
+    # Force STATUS.md to look older than the unit that was just created.
+    status_path = root / "STATUS.md"
+    status_path.write_text(
+        status_path.read_text(encoding="utf-8").replace(str(date.today()), "2020-01-01"),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["check"])
+
+    assert result.exit_code != 0
+    assert "SMAIRT005" in result.output
+    assert "01_alignment" in result.output

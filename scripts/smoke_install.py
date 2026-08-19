@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-STUB_COMMANDS = ("check", "status", "connect")
+STUB_COMMANDS = ("status", "connect")
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
