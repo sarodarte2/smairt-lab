@@ -47,7 +47,7 @@ def test_help_lists_the_full_command_surface() -> None:
     )
 
     assert result.returncode == 0
-    for command in ("new", "unit", "status", "index", "check", "connect"):
+    for command in ("new", "adopt", "unit", "status", "index", "check", "connect"):
         assert command in result.stdout
     for retired in ("open", "repair", "settings", "inspect", "regenerate", "paper", "hpc"):
         assert retired not in result.stdout

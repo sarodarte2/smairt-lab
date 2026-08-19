@@ -162,6 +162,41 @@ def test_rule2_open_question_with_unwritten_log_is_not_flagged(tmp_path: Path) -
     assert report.findings == ()
 
 
+def test_rule2_reference_unit_paths_resolve_against_project_root(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    # Nested under data/ (already a recognized top-level folder) so this test
+    # exercises rule 2 (evidence pointers) in isolation from rule 6 (structure
+    # drift), which a bare new top-level folder would also trip.
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    (root / "data" / "old_analysis" / "de_run1.R").write_text("# analysis\n", encoding="utf-8")
+    create_question(root, "Old DE run", ref_paths=["data/old_analysis"], created=date.today())
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
+def test_rule2_reference_unit_broken_path_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    create_question(root, "Old DE run", ref_paths=["does_not_exist_anywhere"], created=date.today())
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_EVIDENCE_POINTERS}
+    finding = report.findings[0]
+    assert "does_not_exist_anywhere" in finding.message
+
+
+def test_rule2_reference_stage_paths_resolve_against_project_root(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "old_scripts").mkdir(parents=True)
+    create_stage(root, "Old scripts", ref_paths=["data/old_scripts"], created=date.today())
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
 # --- rule 3: receipt completeness -----------------------------------------------
 
 
@@ -294,6 +329,53 @@ def test_rule6_hpc_folder_is_not_flagged(tmp_path: Path) -> None:
     report = run_checks(root)
 
     assert report.findings == ()
+
+
+def test_rule6_adoption_known_folders_are_not_flagged(tmp_path: Path) -> None:
+    from smairt.adopt import adopt_project
+
+    root = tmp_path / "existing"
+    root.mkdir()
+    (root / "old_analysis").mkdir()
+    (root / "old_analysis" / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+    adopt_project(
+        root,
+        name="Adopted",
+        researcher="Ada Lovelace",
+        description="An adopted project.",
+        harness=Harness.none,
+        created=date.today(),
+        scaffold_version="0.0.0-test",
+    )
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
+def test_rule6_folder_added_after_adoption_is_still_flagged(tmp_path: Path) -> None:
+    from smairt.adopt import adopt_project
+
+    root = tmp_path / "existing"
+    root.mkdir()
+    (root / "old_analysis").mkdir()
+
+    adopt_project(
+        root,
+        name="Adopted",
+        researcher="Ada Lovelace",
+        description="An adopted project.",
+        harness=Harness.none,
+        created=date.today(),
+        scaffold_version="0.0.0-test",
+    )
+    (root / "new_after_adoption").mkdir()
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_STRUCTURE_DRIFT}
+    assert any(f.path == "new_after_adoption" for f in report.findings)
 
 
 # --- rule 7: closed-question completeness -----------------------------------------

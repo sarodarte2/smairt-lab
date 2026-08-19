@@ -84,6 +84,21 @@ def test_write_index_overwrites_previous_content_even_though_it_is_generated(
     assert "stale content" not in index_path.read_text()
 
 
+def test_scan_units_handles_a_reference_unit_with_no_logs_folder(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    create_question(root, "Old DE run", ref_paths=["data/old_analysis"], created=date(2026, 1, 6))
+
+    records = scan_units(root)
+
+    assert len(records) == 1
+    assert records[0].logs == ()
+    assert records[0].figures == ()
+
+    # Regenerating the index must not crash for a unit with no logs/figures/.
+    write_index(root)
+
+
 def test_cli_index_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _project(tmp_path)
     create_stage(root, "Alignment", created=date(2026, 1, 5))

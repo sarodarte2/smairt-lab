@@ -186,6 +186,88 @@ def test_cli_unit_new_finds_project_root_from_a_subdirectory(
     assert result.exit_code == 0, result.output
 
 
+def test_create_question_ref_creates_a_thin_unit_with_paths_field(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "old_analysis").mkdir()
+    (root / "old_analysis" / "de_run1.R").write_text("# analysis\n", encoding="utf-8")
+
+    question = create_question(
+        root,
+        "Old DE run 1",
+        ref_paths=["old_analysis"],
+        created=date(2026, 1, 7),
+    )
+    fields, body = frontmatter.read(question / "README.md")
+
+    assert fields["paths"] == ["old_analysis"]
+    assert fields["log"] == ""
+    assert fields["script"] == ""
+    assert "## What this references and why it matters" in body
+    assert "## Why ask this" not in body
+    # Thin: no run-oriented subfolders.
+    assert not (question / "logs").exists()
+    assert not (question / "out").exists()
+    assert not (question / "figures").exists()
+
+
+def test_create_stage_ref_creates_a_thin_unit_with_paths_field(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "old_scripts").mkdir()
+
+    stage = create_stage(
+        root,
+        "Old scripts",
+        ref_paths=["old_scripts"],
+        created=date(2026, 1, 7),
+    )
+    fields, body = frontmatter.read(stage / "README.md")
+
+    assert fields["paths"] == ["old_scripts"]
+    assert fields["log"] == ""
+    assert "## What this references and why it matters" in body
+    assert "## Purpose" not in body
+    assert not (stage / "logs").exists()
+    assert not (stage / "out").exists()
+    assert not (stage / "figures").exists()
+
+
+def test_create_question_ref_supports_multiple_repeated_paths(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "a").mkdir()
+    (root / "b").mkdir()
+
+    question = create_question(
+        root, "Two references", ref_paths=["a", "b"], created=date(2026, 1, 8)
+    )
+    fields, _ = frontmatter.read(question / "README.md")
+
+    assert fields["paths"] == ["a", "b"]
+
+
+def test_cli_unit_new_question_with_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _project(tmp_path)
+    (root / "old_analysis").mkdir()
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(
+        app,
+        [
+            "unit",
+            "new",
+            "question",
+            "--title",
+            "Old DE run",
+            "--ref",
+            "old_analysis",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    unit_dir = next((root / "experiments").glob("*old-de-run*"))
+    fields, _ = frontmatter.read(unit_dir / "README.md")
+    assert fields["paths"] == ["old_analysis"]
+
+
 def test_smairt_yaml_is_untouched_by_yaml_dump_quirks_after_unit_creation(tmp_path: Path) -> None:
     # Sanity check that creating units does not disturb the project's identity file.
     root = _project(tmp_path)

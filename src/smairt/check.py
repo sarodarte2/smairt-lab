@@ -67,6 +67,15 @@ Judgment calls a reviewer should know about
 * Rule 8's growth suggestions each fire at most once per run (naming the
   first offending unit, not every one) — they are prompts to notice a
   pattern, not a per-file audit.
+* Rule SMAIRT002's ``paths:`` field (case 3, spec Part II: reference units)
+  resolves relative to the PROJECT ROOT, not the unit folder — it names
+  pre-existing paths elsewhere in the tree. Every other pointer field
+  (``script:``/``log:``/``outputs:``) stays unit-relative, as before.
+* Rule SMAIRT006 (structure drift) also recognizes ``smairt.yaml``'s
+  ``adoption.known_folders`` (written by ``smairt adopt``) as legitimate
+  top-level folders, on top of the fixed scaffold set — an adopted project's
+  pre-existing directories don't warn; anything new appearing after adoption
+  still does.
 """
 
 from __future__ import annotations
@@ -77,6 +86,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from smairt import frontmatter
 from smairt import units as units_module
@@ -224,7 +235,7 @@ def run_checks(project_root: Path) -> CheckReport:
 
     findings: list[Finding] = []
     findings += _check_frontmatter_schema(units)
-    findings += _check_evidence_pointers(units)
+    findings += _check_evidence_pointers(project_root, units)
     findings += _check_receipt_completeness(units)
 
     suggestions: list[Suggestion] = []
@@ -357,8 +368,14 @@ def _is_closed(kind: UnitKind, status: str | None) -> bool:
     return status in _CLOSED_QUESTION_STATUSES
 
 
-def _pointer_resolves(unit_path: Path, field: str, target: str, closed: bool) -> bool:
-    candidate = unit_path / target
+def _pointer_resolves(
+    unit_path: Path, project_root: Path, field: str, target: str, closed: bool
+) -> bool:
+    # A reference unit's `paths:` (case 3, spec Part II) names pre-existing
+    # paths relative to the PROJECT ROOT, not the unit folder — it points
+    # elsewhere in the tree, unlike script:/log:/outputs: which are unit-local.
+    base = project_root if field == "paths" else unit_path
+    candidate = base / target
     if candidate.exists():
         return True
     if field == "log" and not closed:
@@ -369,7 +386,7 @@ def _pointer_resolves(unit_path: Path, field: str, target: str, closed: bool) ->
     return False
 
 
-def _check_evidence_pointers(units: list[_Unit]) -> list[Finding]:
+def _check_evidence_pointers(project_root: Path, units: list[_Unit]) -> list[Finding]:
     findings: list[Finding] = []
     for unit in units:
         if unit.kind is None:
@@ -392,7 +409,7 @@ def _check_evidence_pointers(units: list[_Unit]) -> list[Finding]:
                     )
                 continue
             for target in targets:
-                if not _pointer_resolves(unit.path, field, target, closed):
+                if not _pointer_resolves(unit.path, project_root, field, target, closed):
                     findings.append(
                         Finding(
                             RULE_EVIDENCE_POINTERS,
@@ -582,6 +599,32 @@ def _check_status_drift(project_root: Path, units: list[_Unit]) -> list[Finding]
 # --- rule 6: structure drift --------------------------------------------------
 
 
+def _adoption_known_folders(project_root: Path) -> frozenset[str]:
+    """Read ``smairt.yaml``'s ``adoption.known_folders`` (empty if absent/malformed).
+
+    ``smairt adopt`` records the top-level directories that already existed at
+    adoption time here (Part II case 3); rule 6 treats them as recognized so an
+    adopted project passes `smairt check` clean immediately. Folders appearing
+    AFTER adoption are not in this list and still warn as usual.
+    """
+    path = project_root / "smairt.yaml"
+    if not path.is_file():
+        return frozenset()
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return frozenset()
+    if not isinstance(config, dict):
+        return frozenset()
+    adoption = config.get("adoption")
+    if not isinstance(adoption, dict):
+        return frozenset()
+    folders = adoption.get("known_folders")
+    if not isinstance(folders, list):
+        return frozenset()
+    return frozenset(str(item) for item in folders)
+
+
 def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Finding]:
     findings: list[Finding] = []
     experiments_dir = project_root / "experiments"
@@ -600,10 +643,11 @@ def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Findi
                 )
             )
     if project_root.is_dir():
+        recognized = _KNOWN_TOP_LEVEL_DIRS | _adoption_known_folders(project_root)
         for entry in sorted(project_root.iterdir(), key=lambda item: item.name):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
-            if entry.name in _KNOWN_TOP_LEVEL_DIRS:
+            if entry.name in recognized:
                 continue
             findings.append(
                 Finding(
@@ -611,7 +655,8 @@ def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Findi
                     WARNING,
                     entry.name,
                     "top-level folder is not part of the known scaffold "
-                    "(background/, data/, scripts/, experiments/, results/, hpc/)",
+                    "(background/, data/, scripts/, experiments/, results/, hpc/) "
+                    "or this adopted project's known_folders",
                 )
             )
     return findings

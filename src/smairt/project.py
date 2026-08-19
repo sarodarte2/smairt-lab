@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from enum import Enum
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import yaml
 
@@ -60,12 +60,12 @@ def create_project(
 
     write_once(
         root / "smairt.yaml",
-        _render_identity(name, researcher, description, harness, today, version),
+        render_identity(name, researcher, description, harness, today, version),
     )
 
     open_questions = [_PAPER_NOTE] if paper else []
-    write_once(root / "STATUS.md", _render_status(today, description, open_questions))
-    write_once(root / "AGENTS.md", _render_agents(name, description))
+    write_once(root / "STATUS.md", render_status(today, description, open_questions))
+    write_once(root / "AGENTS.md", render_agents_md(name, description))
     write_once(root / "CLAUDE.md", CLAUDE_BRIDGE)
     write_once(root / ".gitignore", _GITIGNORE)
 
@@ -88,15 +88,20 @@ def create_project(
     return root
 
 
-def _render_identity(
+def render_identity(
     name: str,
     researcher: str,
     description: str,
     harness: Harness,
     created: date,
     scaffold_version: str,
+    *,
+    adoption: Mapping[str, object] | None = None,
 ) -> str:
-    config = {
+    """Render ``smairt.yaml`` (Part II schema). Shared by ``smairt new`` and
+    ``smairt adopt`` — the latter passes ``adoption`` (``adopted``/``date``/
+    ``known_folders``), the only schema addition adoption makes."""
+    config: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "scaffold_version": scaffold_version,
         "name": name,
@@ -106,16 +111,29 @@ def _render_identity(
         "harnesses": [] if harness is Harness.none else [harness.value],
         "settings": {"strict_hooks": False},
     }
+    if adoption is not None:
+        config["adoption"] = dict(adoption)
     return yaml.safe_dump(config, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
-def _render_status(today: date, description: str, open_questions: Sequence[str]) -> str:
+_DEFAULT_NEXT_STEP = "Create the first stage or question with `smairt unit new`."
+
+
+def render_status(
+    today: date,
+    description: str,
+    open_questions: Sequence[str],
+    *,
+    next_step: str = _DEFAULT_NEXT_STEP,
+) -> str:
+    """Render ``STATUS.md``. Shared by ``smairt new`` and ``smairt adopt`` — the
+    latter passes its own seeded ``next_step`` text."""
     lines = [
         "## Focus",
         description,
         "",
         "## Next",
-        "Create the first stage or question with `smairt unit new`.",
+        next_step,
         "",
         "## Open questions",
         *[f"- {item}" for item in open_questions],
@@ -138,13 +156,15 @@ def _render_question_md(description: str) -> str:
 _PAPER_NOTE = "Paper support (a `paper/` overlay) is deferred until real paper work begins."
 
 
-def _render_agents(name: str, description: str) -> str:
+def render_agents_md(name: str, description: str) -> str:
     """The canonical AGENTS.md contract (spec WP5): ~1 page, tier-3 guidance only.
 
     Everything tier-1 (generated) or tier-2 (checked) can carry is a command
     reference here, not restated as prose — see Part I, foundation 2. Kept
     under the ~120-line cap (including the ``## Project learnings`` header)
-    by :mod:`tests.test_project`.
+    by :mod:`tests.test_project`. Shared verbatim by ``smairt new`` and
+    ``smairt adopt`` (one contract, generated the same way everywhere — spec
+    Part I foundation 2) — the ONE rendering function, no duplicate template.
     """
     return _AGENTS_TEMPLATE.format(name=name, description=description)
 

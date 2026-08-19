@@ -7,6 +7,7 @@ from typing import NoReturn
 import typer
 
 from smairt import __version__
+from smairt import adopt as adopt_module
 from smairt import check as check_module
 from smairt import connect as connect_module
 from smairt import index as index_module
@@ -115,6 +116,55 @@ def new(
 
 
 @app.command()
+def adopt(
+    name: str | None = typer.Option(None, "--name", help="Project name."),
+    researcher: str | None = typer.Option(None, "--researcher", help="Researcher name."),
+    description: str | None = typer.Option(
+        None, "--description", help="One-line project description."
+    ),
+    path: Path | None = typer.Option(
+        None, "--path", help="Directory to adopt (default: current directory)."
+    ),
+    harness: Harness | None = typer.Option(
+        None, "--harness", help="Assistant harness to record in smairt.yaml."
+    ),
+) -> None:
+    """Adopt a pre-existing directory: lay the contract files around it, move nothing."""
+    if name is None:
+        name = typer.prompt("Project name")
+    if researcher is None:
+        researcher = typer.prompt("Researcher")
+    if description is None:
+        description = typer.prompt("One-line description")
+    if harness is None:
+        choices = ", ".join(member.value for member in Harness)
+        harness = Harness(typer.prompt(f"Harness ({choices})", default=Harness.claude_code.value))
+
+    root = path or Path.cwd()
+    try:
+        result = adopt_module.adopt_project(
+            root,
+            name=name,
+            researcher=researcher,
+            description=description,
+            harness=harness,
+        )
+    except (adopt_module.NotAdoptableError, ValueError) as error:
+        _fail("adopt", str(error))
+
+    typer.echo(f"Adopted {root}")
+    typer.echo(f"Known folders: {', '.join(result.known_folders) or '(none)'}")
+    for written in result.written:
+        typer.echo(f"Wrote {written}")
+    for unchanged in result.skipped:
+        typer.echo(f"Unchanged {unchanged}")
+    for warning in result.warned:
+        typer.echo(f"Warning: {warning}", err=True)
+    if result.connect_result is not None:
+        _report_connect(result.connect_result)
+
+
+@app.command()
 def check(
     json_output: bool = typer.Option(
         False, "--json", help="Emit machine-readable JSON instead of human-readable text."
@@ -220,9 +270,19 @@ def unit_new(
     repo: str | None = typer.Option(
         None, "--repo", help="Tool repo URL and commit, if any (with --receipt)."
     ),
+    ref: list[str] = typer.Option(
+        [],
+        "--ref",
+        help=(
+            "Existing path this unit references, relative to the project root "
+            "(repeatable). Creates a thin, README-only reference unit — case 3, "
+            "how pre-existing work gets a unit without moving it."
+        ),
+    ),
 ) -> None:
     """Create a stage or question unit under experiments/. The numbering/dating authority."""
     root = _require_project_root("unit new")
+    ref_paths = ref or None
     try:
         if kind is units_module.UnitKind.stage:
             unit_dir = units_module.create_stage(
@@ -233,6 +293,7 @@ def unit_new(
                 tool_version=tool_version,
                 command=command,
                 repo=repo,
+                ref_paths=ref_paths,
             )
         else:
             unit_dir = units_module.create_question(
@@ -244,6 +305,7 @@ def unit_new(
                 tool_version=tool_version,
                 command=command,
                 repo=repo,
+                ref_paths=ref_paths,
             )
     except (PathExistsError, ValueError) as error:
         _fail("unit new", str(error))

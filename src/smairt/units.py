@@ -38,6 +38,16 @@ _QUESTION_BODY_SECTIONS = (
     "## Next",
 )
 
+# Case 3 (spec Part II, "The three unit cases"): a reference unit is thin —
+# README only, no logs/out/figures — pointing at code/output that already
+# exists outside experiments/ (how a pre-existing project gets adopted). Its
+# README body skips the run-oriented sections entirely.
+_REFERENCE_BODY = (
+    "\n## What this references and why it matters\n\n"
+    "One paragraph: what lives at the referenced path(s), and why it matters "
+    "to this project.\n"
+)
+
 
 class UnitKind(str, Enum):
     stage = "stage"
@@ -92,38 +102,52 @@ def create_stage(
     command: str | None = None,
     repo: str | None = None,
     created: date | None = None,
+    ref_paths: Sequence[str] | None = None,
 ) -> Path:
-    """Create ``experiments/NN_slug/`` — one step of the spine."""
+    """Create ``experiments/NN_slug/`` — one step of the spine.
+
+    ``ref_paths`` (case 3, spec Part II): a non-empty sequence makes this a
+    thin reference unit — README only, no logs/out/figures/ — whose
+    frontmatter carries ``paths:`` (the referenced pre-existing paths,
+    relative to the project root).
+    """
     experiments_dir = project_root / "experiments"
     number = next_stage_number(experiments_dir)
     unit_dir = experiments_dir / f"{number:02d}_{slugify(title, fallback='stage', sep='-')}"
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
 
+    is_reference = bool(ref_paths)
     fields: dict[str, object] = {
         "kind": "stage",
         "title": title,
         "status": "active",
         "created": created or date.today(),
         "script": "",
-        "log": "logs/",
+        "log": "" if is_reference else "logs/",
     }
+    if is_reference:
+        fields["paths"] = list(ref_paths)  # type: ignore[arg-type]
     if receipt:
         fields.update(
             _receipt_fields(tool=tool, tool_version=tool_version, command=command, repo=repo)
         )
 
-    body = (
-        "\n## Purpose\n\n"
-        "One line: what this stage settles.\n\n"
-        "## Approach\n\n"
-        "How it is done today (script or method). Update this if the approach changes.\n\n"
-        "## Result\n\n"
-        "Filled in once this stage has output. If it holds variants, name the active one "
-        "and why the others lost.\n"
-    )
+    if is_reference:
+        body = _REFERENCE_BODY
+    else:
+        body = (
+            "\n## Purpose\n\n"
+            "One line: what this stage settles.\n\n"
+            "## Approach\n\n"
+            "How it is done today (script or method). Update this if the approach changes.\n\n"
+            "## Result\n\n"
+            "Filled in once this stage has output. If it holds variants, name the active one "
+            "and why the others lost.\n"
+        )
     write_once(unit_dir / "README.md", frontmatter.render(fields) + body)
-    _make_standard_subfolders(unit_dir)
+    if not is_reference:
+        _make_standard_subfolders(unit_dir)
     return unit_dir
 
 
@@ -138,14 +162,22 @@ def create_question(
     command: str | None = None,
     repo: str | None = None,
     created: date | None = None,
+    ref_paths: Sequence[str] | None = None,
 ) -> Path:
-    """Create ``experiments/YYYY-MM-DD_slug/`` — one exploratory probe."""
+    """Create ``experiments/YYYY-MM-DD_slug/`` — one exploratory probe.
+
+    ``ref_paths`` (case 3, spec Part II): a non-empty sequence makes this a
+    thin reference unit — README only, no logs/out/figures/ — whose
+    frontmatter carries ``paths:`` (the referenced pre-existing paths,
+    relative to the project root).
+    """
     today = created or date.today()
     slug = slugify(title, fallback="question", sep="-")
     unit_dir = project_root / "experiments" / f"{today.isoformat()}_{slug}"
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
 
+    is_reference = bool(ref_paths)
     fields: dict[str, object] = {
         "kind": "question",
         "title": title,
@@ -153,17 +185,20 @@ def create_question(
         "date": today,
         "hypothesis": hypothesis or "",
         "script": "",
-        "log": f"logs/{slug}.log",
+        "log": "" if is_reference else f"logs/{slug}.log",
         "verdict": "",
     }
+    if is_reference:
+        fields["paths"] = list(ref_paths)  # type: ignore[arg-type]
     if receipt:
         fields.update(
             _receipt_fields(tool=tool, tool_version=tool_version, command=command, repo=repo)
         )
 
-    body = "\n" + "\n\n".join(_QUESTION_BODY_SECTIONS) + "\n"
+    body = _REFERENCE_BODY if is_reference else "\n" + "\n\n".join(_QUESTION_BODY_SECTIONS) + "\n"
     write_once(unit_dir / "README.md", frontmatter.render(fields) + body)
-    _make_standard_subfolders(unit_dir)
+    if not is_reference:
+        _make_standard_subfolders(unit_dir)
     return unit_dir
 
 

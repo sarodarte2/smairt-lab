@@ -151,6 +151,21 @@ def test_mid_project_spine_and_questions_render_correctly(tmp_path: Path) -> Non
     ) in text
 
 
+def test_reference_unit_appears_as_a_live_question_without_crashing(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "old_analysis").mkdir(parents=True)
+
+    create_question(root, "Old DE run", ref_paths=["data/old_analysis"], created=date(2026, 1, 3))
+
+    report = build_status_report(root)
+
+    assert [q.title for q in report.live_questions] == ["Old DE run"]
+    assert report.live_questions[0].status == "open"
+    # No exception rendering either format for a unit with no logs/out/figures.
+    render_human(report)
+    to_json(report)
+
+
 def test_recently_closed_keeps_only_the_most_recent_three(tmp_path: Path) -> None:
     root = _project(tmp_path)
     for day, title in enumerate(

@@ -78,6 +78,7 @@ from typing import Any, Callable
 
 import yaml
 
+from smairt.fsutil import write_or_warn
 from smairt.project import CLAUDE_BRIDGE, Harness
 
 # --- public result type -------------------------------------------------------
@@ -116,23 +117,20 @@ def _write_or_warn(
     """Write ``content`` to ``project_root / relative`` unless a differing file exists.
 
     This is the idempotent + respectful policy (spec WP4 constraint 4) every
-    whole-file target in this module goes through: identical content already
-    there is a no-op; a missing file is written; a present-but-different file
-    is assumed researcher-edited and left alone, with a warning.
+    whole-file target in this module goes through, delegated to the shared
+    :func:`smairt.fsutil.write_or_warn` (also used by ``smairt adopt``): identical
+    content already there is a no-op; a missing file is written; a
+    present-but-different file is assumed researcher-edited and left alone, with
+    a warning.
     """
-    path = project_root / relative
-    if path.is_file():
-        if path.read_text(encoding="utf-8") == content:
-            builder.skipped.append(relative)
-        else:
-            builder.warned.append(
-                f"{relative} already exists and differs from what `smairt connect` would "
-                "generate; left untouched (looks researcher-edited)."
-            )
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    builder.written.append(relative)
+    status, warning = write_or_warn(project_root, relative, content)
+    if status == "written":
+        builder.written.append(relative)
+    elif status == "skipped":
+        builder.skipped.append(relative)
+    else:
+        assert warning is not None
+        builder.warned.append(warning)
 
 
 def read_strict_hooks(project_root: Path) -> bool:
