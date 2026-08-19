@@ -8,6 +8,7 @@ import typer
 
 from smairt import __version__
 from smairt import check as check_module
+from smairt import connect as connect_module
 from smairt import index as index_module
 from smairt import project as project_module
 from smairt import status as status_module
@@ -22,7 +23,7 @@ app = typer.Typer(
     help="Create and manage SMAIRT research workspaces.",
 )
 
-STUB_COMMANDS = ("connect",)
+STUB_COMMANDS: tuple[str, ...] = ()
 
 
 def _version_callback(value: bool) -> None:
@@ -42,11 +43,6 @@ def smairt(
     ),
 ) -> None:
     """Create and manage SMAIRT research workspaces."""
-
-
-def _stub(name: str) -> NoReturn:
-    typer.echo(f"smairt {name}: arrives in a later work package.")
-    raise typer.Exit(code=1)
 
 
 def _fail(command: str, message: str) -> NoReturn:
@@ -114,9 +110,8 @@ def new(
 
     typer.echo(f"Created {root}")
     if harness is not Harness.none:
-        typer.echo(
-            f"Harness wiring for {harness.value} arrives with `smairt connect` in a later work package."
-        )
+        result = connect_module.connect(root, harness, strict=False)
+        _report_connect(result)
 
 
 @app.command()
@@ -150,10 +145,55 @@ def status(
         typer.echo(status_module.render_human(report))
 
 
+def _report_connect(result: connect_module.ConnectResult) -> None:
+    for path in result.written:
+        typer.echo(f"Wrote {path}")
+    for path in result.skipped:
+        typer.echo(f"Unchanged {path}")
+    for warning in result.warned:
+        typer.echo(f"Warning: {warning}", err=True)
+    if not (result.written or result.skipped or result.warned):
+        typer.echo("Nothing to do.")
+
+
 @app.command()
-def connect() -> None:
-    """Connect an assistant harness to a project. Not yet implemented."""
-    _stub("connect")
+def connect(
+    harness: str | None = typer.Argument(
+        None,
+        help=(
+            "Harness to wire up (claude-code, codex, opencode, gemini-cli, cursor), "
+            "or 'ci' for the GitHub Actions template."
+        ),
+    ),
+    ci: bool = typer.Option(
+        False, "--ci", help="Write the GitHub Actions CI template instead of harness wiring."
+    ),
+) -> None:
+    """Wire an assistant harness's hooks to `smairt check` (bridge file + hook config)."""
+    root = _require_project_root("connect")
+
+    if ci or harness == "ci":
+        _report_connect(connect_module.connect_ci(root))
+        return
+
+    if harness is None:
+        _fail(
+            "connect",
+            "a harness is required (claude-code, codex, opencode, gemini-cli, cursor), "
+            "or pass --ci.",
+        )
+
+    try:
+        harness_value = Harness(harness)
+    except ValueError:
+        choices = ", ".join(member.value for member in Harness if member is not Harness.none)
+        _fail("connect", f"unknown harness {harness!r}. Choices: {choices}, ci.")
+
+    if harness_value is Harness.none:
+        _fail("connect", "harness 'none' has no wiring to install.")
+
+    strict = connect_module.read_strict_hooks(root)
+    _report_connect(connect_module.connect(root, harness_value, strict=strict))
 
 
 unit_app = typer.Typer(no_args_is_help=True, help="Create units of research.")

@@ -33,18 +33,9 @@ def test_version_flag_reports_the_installed_version() -> None:
     assert result.stdout.strip() == f"smairt {__version__}"
 
 
-def test_each_stub_subcommand_names_itself_and_exits_nonzero() -> None:
-    for command in STUB_COMMANDS:
-        result = subprocess.run(
-            [str(installed_smairt()), command],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        assert result.returncode != 0, command
-        assert command in result.stdout, command
-        assert "later work package" in result.stdout, command
+def test_no_stub_commands_remain() -> None:
+    # WP4 shipped the last stub (`connect`); this tuple should stay empty.
+    assert STUB_COMMANDS == ()
 
 
 def test_help_lists_the_full_command_surface() -> None:
@@ -56,7 +47,7 @@ def test_help_lists_the_full_command_surface() -> None:
     )
 
     assert result.returncode == 0
-    for command in (*STUB_COMMANDS, "new", "unit", "status", "index", "check"):
+    for command in ("new", "unit", "status", "index", "check", "connect"):
         assert command in result.stdout
     for retired in ("open", "repair", "settings", "inspect", "regenerate", "paper", "hpc"):
         assert retired not in result.stdout
@@ -90,7 +81,10 @@ def test_new_non_interactive_with_complete_flags_prompts_for_nothing(
     assert (root / "smairt.yaml").is_file()
     config = yaml.safe_load((root / "smairt.yaml").read_text())
     assert config["name"] == "CLI Project"
-    assert "smairt connect" in result.output
+    # `smairt new` wires the selected harness's hooks via the same logic as
+    # `smairt connect` (WP4), rather than deferring to a later work package.
+    assert (root / ".claude" / "settings.json").is_file()
+    assert ".claude/settings.json" in result.output
 
 
 def test_new_refuses_to_overwrite_an_existing_project(tmp_path: Path) -> None:

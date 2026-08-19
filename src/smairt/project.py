@@ -66,7 +66,7 @@ def create_project(
     open_questions = [_PAPER_NOTE] if paper else []
     write_once(root / "STATUS.md", _render_status(today, description, open_questions))
     write_once(root / "AGENTS.md", _AGENTS_PLACEHOLDER)
-    write_once(root / "CLAUDE.md", _CLAUDE_BRIDGE)
+    write_once(root / "CLAUDE.md", CLAUDE_BRIDGE)
     write_once(root / ".gitignore", _GITIGNORE)
 
     write_once(root / "background" / "README.md", _BACKGROUND_README)
@@ -155,7 +155,10 @@ Start by reading `STATUS.md`: focus, next step, open questions. Add work with
 folders under `experiments/`.
 """
 
-_CLAUDE_BRIDGE = """\
+# The 2-line Claude Code bridge (spec Part II): imports AGENTS.md so Claude Code,
+# which reads CLAUDE.md and not AGENTS.md natively, still gets the same contract as
+# every other harness. Public so smairt.connect can reuse it verbatim (WP4).
+CLAUDE_BRIDGE = """\
 # SMAIRT
 @AGENTS.md
 """

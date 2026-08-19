@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-STUB_COMMANDS = ("connect",)
+STUB_COMMANDS: tuple[str, ...] = ()
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
