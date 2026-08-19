@@ -1,3 +1,11 @@
+"""Tests for ``smairt check`` (src/smairt/check.py): the eight state-contract rules.
+
+Each rule (SMAIRT001-007, plus the SMAIRT1xx advisory suggestions) gets its
+own section below, marked with a ``# ---`` header matching the rule's name in
+check.py. ``_project`` builds a throwaway project per test; ``_set_fields``
+edits one unit's frontmatter to provoke (or fix) a specific finding.
+"""
+
 from __future__ import annotations
 
 import subprocess

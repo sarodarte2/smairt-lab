@@ -106,6 +106,10 @@ def build_status_report(project_root: Path) -> StatusReport:
     live_questions: list[QuestionEntry] = []
     closed_questions: list[QuestionEntry] = []
 
+    # Sort every unit into exactly one bucket by its frontmatter kind/status:
+    # stages all go on the spine; questions split into "still open" vs.
+    # "closed" (dropping any status this schema doesn't recognize, which
+    # `smairt check`'s SMAIRT001 rule would already be flagging separately).
     for entry, fields in _iter_units(project_root):
         kind = fields.get("kind")
         rel = f"experiments/{entry.name}"
@@ -180,6 +184,12 @@ def _iter_units(project_root: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
 
 
 def _format_date(value: Any) -> str:
+    """Turn a frontmatter ``date:`` value into an ISO string for display/sorting.
+
+    PyYAML parses an unquoted ``2026-08-12`` into a real ``date`` object, but
+    a malformed or quoted value could come through as a plain string (or be
+    missing). This normalizes all three cases to one consistent output.
+    """
     if isinstance(value, datetime):
         return value.date().isoformat()
     if isinstance(value, date):

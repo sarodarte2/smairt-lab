@@ -1,3 +1,9 @@
+"""Tests for the scaffold blueprint (src/smairt/scaffold.py).
+
+Covers loading and validating the checked-in blueprint YAML, and
+diff_blueprints()'s added/removed/renamed/ownership-changed comparison.
+"""
+
 from __future__ import annotations
 
 from datetime import date

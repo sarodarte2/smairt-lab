@@ -1,3 +1,10 @@
+"""Tests for ``smairt new`` (src/smairt/project.py): the day-one scaffold.
+
+Covers the full set of files/folders create_project() writes, the
+write-once refusal on a second run, and the rendered content of
+AGENTS.md/STATUS.md/smairt.yaml.
+"""
+
 from __future__ import annotations
 
 from datetime import date

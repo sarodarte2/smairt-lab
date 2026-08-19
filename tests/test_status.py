@@ -1,3 +1,9 @@
+"""Tests for ``smairt status`` (src/smairt/status.py): the orientation report.
+
+Covers the spine/live-questions/recently-closed sections, STATUS drift
+reporting, and both the human-readable and --json renderings.
+"""
+
 from __future__ import annotations
 
 import json

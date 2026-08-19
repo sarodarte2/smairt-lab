@@ -1,3 +1,16 @@
+"""``smairt index`` — regenerates ``results/INDEX.md``, the one-page evidence map.
+
+Every unit under ``experiments/`` records its own status and points at its
+own logs/figures. This module walks all of them and builds a single table
+(one row per unit) so a researcher — or another tool — can see the whole
+project's evidence at a glance without opening every unit's README.
+
+INDEX.md is *derived*, not hand-written: it is always safe to regenerate,
+and nothing in this file ever reads back what was there before. Called both
+directly (``smairt index``) and as a side effect of ``smairt new``,
+``smairt adopt``, and ``smairt status``.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -58,6 +71,13 @@ def scan_units(project_root: Path) -> list[UnitRecord]:
 
 
 def _listed_files(folder: Path) -> tuple[str, ...]:
+    """List the file names directly inside ``folder``, alphabetically.
+
+    Used for a unit's ``logs/`` and ``figures/`` subfolders. Skips
+    ``.gitkeep`` (a placeholder Git needs to track an otherwise-empty
+    folder — not real evidence) and returns an empty tuple if the folder
+    doesn't exist yet (e.g. a question that hasn't produced figures).
+    """
     if not folder.is_dir():
         return ()
     return tuple(

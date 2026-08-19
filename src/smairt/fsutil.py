@@ -1,3 +1,23 @@
+"""Shared file-writing rules: how SMAIRT is allowed to touch a researcher's disk.
+
+Every module that writes files (``project.py``, ``units.py``, ``connect.py``,
+``adopt.py``) goes through one of the two functions here instead of calling
+``Path.write_text`` directly. That keeps SMAIRT's core promise — "we never
+silently overwrite something you wrote" — enforced in exactly one place
+instead of re-implemented (and possibly gotten wrong) in every caller.
+
+Two write policies, for two different situations:
+
+* :func:`write_once` — for files that are only ever created once (a new
+  project's skeleton, a new unit's README). If the file already exists, that
+  is treated as a bug or a mistake, and it raises loudly.
+* :func:`write_or_warn` — for files that a tool might reasonably re-generate
+  later (harness hook configs, adoption's contract files). If the file exists
+  with the exact content we'd write, do nothing; if it exists with different
+  content, assume the researcher edited it on purpose and leave it alone,
+  with a warning instead of an error.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

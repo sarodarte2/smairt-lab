@@ -1,3 +1,19 @@
+"""The scaffold blueprint: a checked-in manifest of every path SMAIRT can generate.
+
+This module does not generate anything itself (``project.py`` and
+``units.py`` do that by formatting plain strings). Instead, it defines and
+loads ``assets/scaffold-blueprint.yaml`` — a hand-maintained list of every
+file/folder those generators are expected to produce, with metadata about who
+"owns" each one (tool guidance vs. researcher work) and whether it's always
+created or only for HPC projects.
+
+Why keep a separate manifest of what the code already does? So a reviewer (or
+CI, via ``scripts/scaffold_diff.py``) can diff two versions of the blueprint
+and see, in plain terms, exactly which generated paths were added, removed,
+renamed, or changed ownership — without having to read a diff of the
+generator code itself. :func:`diff_blueprints` is what powers that comparison.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
@@ -14,6 +30,8 @@ AssetCondition = Literal["always", "hpc"]
 
 
 class ScaffoldAsset(BaseModel):
+    """One entry in the blueprint: a single generated file or folder."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -27,6 +45,12 @@ class ScaffoldAsset(BaseModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
+        """Reject anything that isn't a plain, safe relative path.
+
+        No absolute paths, no ``..`` segments (which could escape the
+        project folder), and no empty/``"."`` paths — every asset must name
+        a real, contained location under the project root.
+        """
         path = PurePosixPath(value)
         if path.is_absolute() or ".." in path.parts or value in {"", "."}:
             raise ValueError("scaffold asset paths must be safe relative paths")
@@ -34,6 +58,7 @@ class ScaffoldAsset(BaseModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> ScaffoldAsset:
+        """A file asset must name where its content comes from; a directory can't."""
         if self.kind == "file" and self.source is None:
             raise ValueError("file assets require a source")
         if self.kind == "directory" and self.source is not None:
@@ -58,6 +83,7 @@ class ScaffoldBlueprint(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_identity_and_paths(self) -> ScaffoldBlueprint:
+        """No two assets may share an id or a path — each must be unambiguous."""
         ids = [asset.id for asset in self.assets]
         paths = [asset.path for asset in self.assets]
         if len(ids) != len(set(ids)):
@@ -68,6 +94,7 @@ class ScaffoldBlueprint(BaseModel):
 
 
 def load_blueprint() -> ScaffoldBlueprint:
+    """Read and validate the checked-in ``assets/scaffold-blueprint.yaml``."""
     path = Path(__file__).parent / "assets" / "scaffold-blueprint.yaml"
     return ScaffoldBlueprint.model_validate(yaml.safe_load(path.read_text()))
 
@@ -75,6 +102,14 @@ def load_blueprint() -> ScaffoldBlueprint:
 def diff_blueprints(
     previous: Mapping[str, object], current: Mapping[str, object]
 ) -> dict[str, list[str]]:
+    """Compare two blueprint versions (as raw dicts) by asset id.
+
+    Matches assets across versions by their stable ``id`` (not their path,
+    since a path can change on purpose — that's a "rename"). Returns a dict
+    with five lists of human-readable strings: ``added``, ``removed``,
+    ``renamed``, ``ownership_changed``, ``condition_changed`` — the kinds of
+    change a reviewer most needs to notice between two scaffold versions.
+    """
     before = _entries_by_id(previous)
     after = _entries_by_id(current)
     before_ids = set(before)
@@ -102,6 +137,7 @@ def diff_blueprints(
 
 
 def _entries_by_id(data: Mapping[str, object]) -> dict[str, dict[str, str]]:
+    """Reshape a raw blueprint dict into ``{asset_id: {field: value}}`` for easy diffing."""
     raw = data.get("assets")
     if not isinstance(raw, list):
         raise ValueError("blueprint data must contain an assets list")

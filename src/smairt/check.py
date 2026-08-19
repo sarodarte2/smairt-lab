@@ -146,6 +146,11 @@ class CheckReport:
 
     @property
     def exit_code(self) -> int:
+        """1 if there are any errors/warnings, else 0 — what the CLI process exits with.
+
+        Suggestions never affect this: they're advisory-only, so a project
+        with suggestions but zero findings still exits 0 (success).
+        """
         return 1 if self.findings else 0
 
 
@@ -207,6 +212,14 @@ def _split_status_sections(body: str) -> dict[str, str]:
 
 
 def _status_bullets(text: str) -> tuple[str, ...]:
+    """Pull the ``- item`` bullet lines out of one STATUS.md section's text.
+
+    Used for the "Open questions" and "Decisions" sections, which are
+    written as a Markdown bullet list. Non-bullet lines are dropped rather
+    than raising, since this is reading free-text prose (foundation 5: never
+    judge the researcher's prose) — a section that isn't a tidy bullet list
+    just yields fewer (or zero) items instead of erroring.
+    """
     items = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -230,7 +243,15 @@ class _Unit:
 
 
 def run_checks(project_root: Path) -> CheckReport:
-    """Run every WP2 rule against the project at ``project_root``. Read-only."""
+    """Run every WP2 rule against the project at ``project_root``. Read-only.
+
+    This is the one function that ties all eight rules together: it loads
+    every unit once (:func:`_load_units`), then hands that same list to each
+    rule function in turn, collecting their findings/suggestions into one
+    report. To add a new rule, write a ``_check_*`` (findings) or
+    ``_suggest_*`` (suggestions) function following the pattern below and
+    call it from here — see docs/ARCHITECTURE.md.
+    """
     units = _load_units(project_root)
 
     findings: list[Finding] = []
@@ -242,6 +263,9 @@ def run_checks(project_root: Path) -> CheckReport:
     if _is_git_repo(project_root):
         findings += _check_log_immutability(project_root, units)
     else:
+        # No Git, no history to check for edits after the fact -- rule
+        # SMAIRT004 simply can't run, so we say so once (SMAIRT101) instead
+        # of silently skipping it.
         suggestions.append(
             Suggestion(
                 SUGGEST_GIT_UNAVAILABLE,
@@ -265,6 +289,15 @@ def run_checks(project_root: Path) -> CheckReport:
 
 
 def _load_units(project_root: Path) -> list[_Unit]:
+    """Read every unit folder under ``experiments/`` into a list of :class:`_Unit`.
+
+    This is the single place every rule below gets its unit data from, so
+    each rule function only has to loop over an already-parsed list instead
+    of re-reading the filesystem itself. A unit whose README fails to parse
+    still becomes a ``_Unit`` (with ``error`` set and ``kind``/``status`` left
+    ``None``) rather than being skipped — that's what lets rule 1
+    (frontmatter schema) report it as a SMAIRT001 finding.
+    """
     experiments_dir = project_root / "experiments"
     if not experiments_dir.is_dir():
         return []
@@ -306,6 +339,16 @@ def _load_units(project_root: Path) -> list[_Unit]:
 
 
 def _check_frontmatter_schema(units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT001: every unit's frontmatter must parse and match its schema.
+
+    Checked in order, each guarded by ``continue`` so a badly broken unit
+    doesn't also get flooded with follow-on findings that wouldn't make
+    sense: (1) does the frontmatter parse at all (caught earlier, by
+    :func:`_load_units`); (2) is ``kind:`` a recognized value (``stage`` or
+    ``question``). Once both of those pass, (3) ``status:`` and (4) every
+    required field (from :mod:`smairt.units`) are checked independently, so
+    a unit can rack up several findings at once for those two.
+    """
     findings: list[Finding] = []
     for unit in units:
         readme_rel = f"{unit.rel}/README.md"
@@ -354,6 +397,13 @@ def _check_frontmatter_schema(units: list[_Unit]) -> list[Finding]:
 
 
 def _as_targets(value: Any) -> list[str]:
+    """Normalize a frontmatter pointer field into a list of path strings.
+
+    A pointer field (``script:``, ``log:``, ``outputs:``, ``paths:``) can be
+    written as a single string or as a YAML list — this treats both the same
+    way, dropping blanks so an empty ``log: ""`` becomes an empty list rather
+    than a list containing one blank string.
+    """
     if isinstance(value, str):
         stripped = value.strip()
         return [stripped] if stripped else []
@@ -363,6 +413,14 @@ def _as_targets(value: Any) -> list[str]:
 
 
 def _is_closed(kind: UnitKind, status: str | None) -> bool:
+    """Is this unit "done" — no longer expected to change?
+
+    A closed unit is held to a stricter standard (rule SMAIRT002: its
+    script:/log: pointers must actually exist, not just be plausible).
+    "Closed" means a different set of statuses for each kind: a stage is
+    closed when frozen or dead-end; a question is closed by any status other
+    than open (supported/refuted/inconclusive/dead-end).
+    """
     if kind is UnitKind.stage:
         return status in _CLOSED_STAGE_STATUSES
     return status in _CLOSED_QUESTION_STATUSES
@@ -371,6 +429,12 @@ def _is_closed(kind: UnitKind, status: str | None) -> bool:
 def _pointer_resolves(
     unit_path: Path, project_root: Path, field: str, target: str, closed: bool
 ) -> bool:
+    """Does this one pointer field's target actually exist on disk?
+
+    Example: ``script: analysis.py`` resolves if ``analysis.py`` exists next
+    to the unit's README. Returns ``False`` (a finding) if not — with one
+    exception for not-yet-run questions, explained below.
+    """
     # A reference unit's `paths:` (case 3, spec Part II) names pre-existing
     # paths relative to the PROJECT ROOT, not the unit folder — it points
     # elsewhere in the tree, unlike script:/log:/outputs: which are unit-local.
@@ -387,6 +451,14 @@ def _pointer_resolves(
 
 
 def _check_evidence_pointers(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT002: every evidence pointer must point at something real.
+
+    Walks each of the four pointer fields (``script:``, ``log:``,
+    ``outputs:``, ``paths:``) on every unit. An empty pointer is only a
+    problem if the unit is closed and the field is script:/log: (an open
+    unit is allowed to not have run yet); a non-empty pointer that doesn't
+    resolve to a real path is always a problem, via :func:`_pointer_resolves`.
+    """
     findings: list[Finding] = []
     for unit in units:
         if unit.kind is None:
@@ -425,6 +497,16 @@ def _check_evidence_pointers(project_root: Path, units: list[_Unit]) -> list[Fin
 
 
 def _check_receipt_completeness(units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT003: a "receipt" unit (``tool:`` set) must record its receipt fully.
+
+    A unit becomes a receipt the moment its frontmatter has a non-empty
+    ``tool:`` field (see :func:`smairt.units.create_stage`'s ``receipt=``
+    option). Once it is one, three things are required: a non-blank
+    ``tool_version:``, a non-blank ``command:``, and a ``log:`` that both is
+    set AND points at a file that exists — unlike rule SMAIRT002, a receipt's
+    log is never given the "not run yet" pass, because pointing at an outside
+    tool's output only makes sense once that output exists.
+    """
     findings: list[Finding] = []
     for unit in units:
         if unit.kind is None:
@@ -479,6 +561,13 @@ def _check_receipt_completeness(units: list[_Unit]) -> list[Finding]:
 
 
 def _is_git_repo(project_root: Path) -> bool:
+    """Is ``project_root`` inside a usable Git working tree?
+
+    Checks two things: is a ``git`` executable even on PATH, and does
+    ``git rev-parse`` succeed from this folder. Rule SMAIRT004 (log
+    immutability) needs Git history to work at all, so this gate decides
+    whether to run that rule or fall back to the SMAIRT101 advisory instead.
+    """
     if shutil.which("git") is None:
         return False
     result = subprocess.run(
@@ -526,6 +615,14 @@ def _git_modified_paths(project_root: Path, rel_dir: Path) -> set[str]:
 
 
 def _check_log_immutability(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT004: a file under a unit's ``logs/`` must never be edited after it lands.
+
+    Raw logs are the ground truth a unit's conclusions are checked against;
+    editing one after the fact would let someone rewrite the evidence. This
+    asks Git (via :func:`_git_modified_paths`) which log files have a
+    modification recorded after their first commit, and flags every one
+    found. Only runs when :func:`_is_git_repo` says Git history is available.
+    """
     findings: list[Finding] = []
     for unit in units:
         logs_dir = unit.path / "logs"
@@ -550,6 +647,14 @@ def _check_log_immutability(project_root: Path, units: list[_Unit]) -> list[Find
 
 
 def _coerce_date(value: object) -> date | None:
+    """Best-effort conversion of a YAML-parsed value into a plain ``date``.
+
+    PyYAML usually parses an unquoted ``2026-08-12`` into a real ``date`` (or
+    ``datetime``) already, but a hand-edited or oddly quoted value could come
+    through as a string, or as something else entirely. Returns ``None``
+    (rather than raising) for anything that isn't a recognizable date, since
+    a malformed ``updated:`` shouldn't crash the whole check run.
+    """
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -563,6 +668,14 @@ def _coerce_date(value: object) -> date | None:
 
 
 def _newest_mtime_date(unit_dir: Path) -> date:
+    """The calendar date of the most recently modified file inside ``unit_dir``.
+
+    Walks every file under the unit (skipping ``.gitkeep`` placeholders) and
+    takes the latest modification time, truncated to a date — matching the
+    day-granularity STATUS.md's ``updated:`` field already uses, so the two
+    are comparable. Falls back to the unit folder's own mtime if it somehow
+    has no files at all (e.g. a fresh reference unit).
+    """
     newest: float | None = None
     for path in unit_dir.rglob("*"):
         if not path.is_file() or path.name == ".gitkeep":
@@ -576,6 +689,13 @@ def _newest_mtime_date(unit_dir: Path) -> date:
 
 
 def _check_status_drift(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT005 (warning): flag units changed after STATUS.md was last updated.
+
+    STATUS.md is the project's hand-maintained "what's going on" summary; if
+    a unit has newer files than STATUS.md's own ``updated:`` date, that
+    summary is probably stale. Skipped entirely if STATUS.md is missing,
+    malformed, or has no ``updated:`` date to compare against.
+    """
     status = read_status(project_root)
     if status is None or status.updated is None:
         return []
@@ -626,6 +746,16 @@ def _adoption_known_folders(project_root: Path) -> frozenset[str]:
 
 
 def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT006 (warning): flag files/folders outside the expected project shape.
+
+    Two separate checks, both warnings rather than errors (the project still
+    works, it just doesn't match the documented shape): (1) any file sitting
+    loose directly under ``experiments/`` instead of inside a unit folder;
+    (2) any top-level folder that isn't one of the standard scaffold folders
+    (background/data/scripts/experiments/results/hpc) or one this project's
+    ``smairt adopt`` already recorded as pre-existing (see
+    :func:`_adoption_known_folders`).
+    """
     findings: list[Finding] = []
     experiments_dir = project_root / "experiments"
     if experiments_dir.is_dir():
@@ -666,6 +796,13 @@ def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Findi
 
 
 def _check_closed_question_completeness(units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT007: a closed question must record its verdict.
+
+    "Closed" here means any question status other than open (supported,
+    refuted, inconclusive, or dead-end) — the point of closing a question is
+    to answer it, so a blank ``verdict:`` on a closed question means the
+    answer was never actually written down.
+    """
     findings: list[Finding] = []
     for unit in units:
         if unit.kind is not UnitKind.question:
@@ -689,6 +826,12 @@ def _check_closed_question_completeness(units: list[_Unit]) -> list[Finding]:
 
 
 def _contains_slurm_content(unit_dir: Path) -> bool:
+    """Does any file inside ``unit_dir`` mention ``sbatch`` (SLURM's submit command)?
+
+    A crude but cheap text search, not a real SLURM script parser — good
+    enough for the SMAIRT102 advisory, which is just a "you might want an
+    hpc/ folder" nudge, not something a researcher needs to trust completely.
+    """
     for path in unit_dir.rglob("*"):
         if not path.is_file() or path.name == ".gitkeep":
             continue
@@ -702,6 +845,11 @@ def _contains_slurm_content(unit_dir: Path) -> bool:
 
 
 def _suggest_hpc(project_root: Path, units: list[_Unit]) -> list[Suggestion]:
+    """Advisory SMAIRT102: nudge toward an ``hpc/`` folder if SLURM content shows up without one.
+
+    Stops at the first unit with SLURM content (see :func:`_contains_slurm_content`)
+    — this is a "notice the pattern" prompt, not an audit of every occurrence.
+    """
     if (project_root / "hpc").is_dir():
         return []
     for unit in units:
@@ -718,6 +866,14 @@ def _suggest_hpc(project_root: Path, units: list[_Unit]) -> list[Suggestion]:
 
 
 def _question_slug_word(unit: _Unit) -> str | None:
+    """The first word of a question unit's slug, for spotting a shared naming pattern.
+
+    Example: folder ``2026-08-12_align-reads`` -> ``"align"``. A question
+    folder is named ``date_slug``, and the slug's words are joined with
+    ``-`` (see :mod:`smairt.text`), so splitting on ``_`` then ``-`` peels
+    off exactly the leading word. Returns ``None`` if the name doesn't have
+    the expected shape at all.
+    """
     name = unit.path.name
     if "_" not in name:
         return None
@@ -728,6 +884,13 @@ def _question_slug_word(unit: _Unit) -> str | None:
 
 
 def _suggest_grouping(units: list[_Unit]) -> list[Suggestion]:
+    """Advisory SMAIRT103: nudge toward a grouping subfolder when 3+ questions share a leading word.
+
+    Example: ``align-v1``, ``align-v2``, ``align-debug`` all start with
+    "align" — three or more such questions might be a sign they'd read
+    better grouped under a subfolder of experiments/. One suggestion per
+    shared word, naming the first offending unit as the example.
+    """
     groups: dict[str, list[str]] = {}
     for unit in units:
         if unit.kind is not UnitKind.question:
@@ -752,6 +915,13 @@ def _suggest_grouping(units: list[_Unit]) -> list[Suggestion]:
 
 
 def _suggest_paper_overlay(project_root: Path) -> list[Suggestion]:
+    """Advisory SMAIRT104: point at the (not-yet-built) Paper overlay if STATUS.md mentions paper work.
+
+    A plain case-insensitive text search for "paper", "manuscript", or
+    "figure legend" in STATUS.md — deliberately simple, since this is only a
+    pointer to a deferred future feature, not a rule the researcher needs to
+    satisfy.
+    """
     status_path = project_root / "STATUS.md"
     if not status_path.is_file():
         return []

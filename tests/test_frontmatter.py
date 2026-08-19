@@ -1,3 +1,9 @@
+"""Tests for the frontmatter reader/writer (src/smairt/frontmatter.py).
+
+Covers round-tripping a YAML block through render() then parse(), and the
+malformed-input cases that should raise FrontmatterError.
+"""
+
 from __future__ import annotations
 
 from datetime import date

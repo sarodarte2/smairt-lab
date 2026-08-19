@@ -100,6 +100,13 @@ def _looks_like_smairt_checkout(root: Path) -> bool:
 
 
 def _known_folders(root: Path) -> list[str]:
+    """List every non-hidden top-level folder already at ``root``, alphabetically.
+
+    Recorded into ``smairt.yaml``'s ``adoption.known_folders`` as a map of
+    what pre-existed adoption (see module docstring) — used both by
+    ``smairt check``'s structure-drift rule (so these don't warn) and by the
+    ``smairt-adopt`` skill (as the list of folders to walk).
+    """
     return sorted(
         entry.name for entry in root.iterdir() if entry.is_dir() and not entry.name.startswith(".")
     )
@@ -150,6 +157,9 @@ def adopt_project(
     skipped: list[str] = []
     warned: list[str] = []
 
+    # Small local helper so each contract file below is one line: write it,
+    # then sort the result into written/skipped/warned depending on what
+    # write_or_warn (smairt.fsutil) decided to do with it.
     def _write(relative: str, content: str) -> None:
         status, warning = write_or_warn(root, relative, content)
         if status == "written":

@@ -1,3 +1,9 @@
+"""Tests for ``smairt index`` (src/smairt/index.py): the results/INDEX.md generator.
+
+Covers scanning units into rows, rendering the Markdown table, and that
+INDEX.md is fully regenerated (not merged) on every call.
+"""
+
 from __future__ import annotations
 
 from datetime import date

@@ -1,3 +1,24 @@
+"""``smairt new`` — creates a brand-new project's "day-one scaffold" from scratch.
+
+This is the module a researcher's first command runs through. It renders the
+ten starting files/folders a fresh SMAIRT project needs (``smairt.yaml``,
+``STATUS.md``, ``AGENTS.md``, ``.gitignore``, ``background/``, ``data/``,
+``scripts/``, ``experiments/``, ``results/``, and optionally ``hpc/``) and
+writes them once via :func:`smairt.fsutil.write_once` — so running ``smairt
+new`` a second time against the same folder is refused rather than silently
+overwriting anything.
+
+Most of this file's length is the literal *text* of the generated files
+(the big triple-quoted string constants near the bottom, like
+``_AGENTS_TEMPLATE`` and ``_GITIGNORE``) — the actual logic is short. Two of
+its rendering functions are reused elsewhere because the content must be
+byte-identical everywhere it appears: :func:`render_identity` and
+:func:`render_status` are also called by :mod:`smairt.adopt` (adopting a
+pre-existing project uses the same ``smairt.yaml``/``STATUS.md`` shape, just
+with different starting values), and :func:`render_agents_md` is the single
+place ``AGENTS.md`` is generated for both ``smairt new`` and ``smairt adopt``.
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -26,7 +47,15 @@ class Harness(str, Enum):
 
 
 def find_project_root(start: Path) -> Path | None:
-    """Walk upward from ``start`` looking for the nearest ``smairt.yaml``."""
+    """Walk upward from ``start`` looking for the nearest ``smairt.yaml``.
+
+    This is how every command (``check``, ``status``, ``unit new``, ...)
+    figures out "which project am I in" — the same way Git finds the
+    repository root by looking for ``.git``. A researcher can run
+    ``smairt check`` from any subfolder of their project, not just the top.
+    Returns ``None`` if no ``smairt.yaml`` is found before reaching the
+    filesystem root (i.e. we're not inside a SMAIRT project at all).
+    """
     current = start.resolve()
     for candidate in (current, *current.parents):
         if (candidate / "smairt.yaml").is_file():
@@ -58,14 +87,23 @@ def create_project(
     today = created or date.today()
     version = scaffold_version or __version__
 
+    # smairt.yaml is the project's identity file (name, researcher, harness) --
+    # written first so every later step happens inside a folder that
+    # find_project_root() can already recognize as a SMAIRT project.
     write_once(
         root / "smairt.yaml",
         render_identity(name, researcher, description, harness, today, version),
     )
 
+    # STATUS.md starts with the paper note as its one open question, if the
+    # researcher said this project expects to support a paper -- a nudge
+    # toward the (currently deferred) Paper overlay, not a real feature yet.
     open_questions = [_PAPER_NOTE] if paper else []
     write_once(root / "STATUS.md", render_status(today, description, open_questions))
     write_once(root / "AGENTS.md", render_agents_md(name, description))
+    # CLAUDE.md is the 2-line bridge so Claude Code (which reads CLAUDE.md,
+    # not AGENTS.md) still ends up following the same one contract as every
+    # other harness -- see CLAUDE_BRIDGE below.
     write_once(root / "CLAUDE.md", CLAUDE_BRIDGE)
     write_once(root / ".gitignore", _GITIGNORE)
 
@@ -78,6 +116,9 @@ def create_project(
     write_once(root / "scripts" / "README.md", _SCRIPTS_README)
     write_once(root / "experiments" / "README.md", _EXPERIMENTS_README)
 
+    # results/INDEX.md is derived, not a skeleton (Part I, foundation 3): it's
+    # generated fresh here rather than written from a template string, and
+    # every later smairt command that touches units regenerates it too.
     (root / "results").mkdir(parents=True, exist_ok=True)
     index.write_index(root)
 
@@ -145,6 +186,7 @@ def render_status(
 
 
 def _render_question_md(description: str) -> str:
+    """Render ``background/question.md``, seeded with the project's one-line description."""
     return (
         "# The question\n\n"
         f"{description}\n\n"

@@ -1,3 +1,21 @@
+# See docs/ARCHITECTURE.md for the full tour of how a command flows from here
+# down into the shared modules (project.py, units.py, check.py, ...).
+"""``smairt`` — the command-line entry point every researcher and harness actually types.
+
+This is the thin top layer: each function below is one ``smairt`` subcommand
+(``new``, ``adopt``, ``check``, ``status``, ``connect``, ``unit new``,
+``index``). None of them contain real logic — each one just parses its
+options (Typer, the library imported below, turns each function's arguments
+into CLI flags automatically), calls into the matching module
+(:mod:`smairt.project`, :mod:`smairt.units`, :mod:`smairt.check`, etc.) to do
+the actual work, and prints the result.
+
+Note for readers: a command function's docstring becomes its ``--help`` text
+(Typer reads it directly), so those docstrings are part of SMAIRT's public,
+user-facing behavior — unlike everywhere else in this codebase, they are not
+free to reword.
+"""
+
 from __future__ import annotations
 
 import json
@@ -24,10 +42,20 @@ app = typer.Typer(
     help="Create and manage SMAIRT research workspaces.",
 )
 
+# Historical marker from earlier development: commands not yet implemented
+# used to be listed here so tests could assert they were still stubs. Every
+# command is now real, so this stays empty; test_cli.py checks it stays that
+# way (a non-empty tuple would mean a command regressed to a stub).
 STUB_COMMANDS: tuple[str, ...] = ()
 
 
 def _version_callback(value: bool) -> None:
+    """Print the version and exit immediately, if ``--version`` was passed.
+
+    Typer calls this as soon as it parses ``--version`` (before running any
+    command, because the option is ``is_eager=True`` below) — that's why
+    ``smairt --version`` works without needing a subcommand.
+    """
     if value:
         typer.echo(f"smairt {__version__}")
         raise typer.Exit()
@@ -47,11 +75,26 @@ def smairt(
 
 
 def _fail(command: str, message: str) -> NoReturn:
+    """Print an error to stderr in the "smairt <command>: <message>" shape, then exit 1.
+
+    Every command's error handling goes through this one function so the
+    error format is consistent no matter which command failed. ``NoReturn``
+    tells mypy this function never returns normally (it always raises) — so
+    callers like :func:`_require_project_root` below don't need an `else`.
+    """
     typer.echo(f"smairt {command}: {message}", err=True)
     raise typer.Exit(code=1)
 
 
 def _require_project_root(command: str) -> Path:
+    """Find the current SMAIRT project's root folder, or exit with an error.
+
+    Every command except ``new`` needs to already be inside a project (found
+    the same way Git finds its repo root — see
+    :func:`smairt.project.find_project_root`). Centralizing this one check
+    here means each command below is one line shorter and the "not a SMAIRT
+    project" message is worded identically everywhere.
+    """
     root = project_module.find_project_root(Path.cwd())
     if root is None:
         _fail(
@@ -196,6 +239,13 @@ def status(
 
 
 def _report_connect(result: connect_module.ConnectResult) -> None:
+    """Print a :class:`~smairt.connect.ConnectResult` the same way after every call.
+
+    Shared by the ``new`` command (which connects a harness automatically),
+    ``adopt``, and ``connect`` itself, so "Wrote X" / "Unchanged X" /
+    "Warning: ..." always reads identically no matter which command
+    triggered the harness wiring.
+    """
     for path in result.written:
         typer.echo(f"Wrote {path}")
     for path in result.skipped:
@@ -322,6 +372,11 @@ def index() -> None:
 
 
 def main() -> None:
+    """The actual entry point installed as the ``smairt`` console script.
+
+    Just hands off to Typer's ``app()``, which parses ``sys.argv`` and
+    dispatches to whichever ``@app.command()`` function matches.
+    """
     app()
 
 

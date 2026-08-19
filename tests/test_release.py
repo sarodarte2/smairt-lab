@@ -1,3 +1,10 @@
+"""Packaging test: does a built wheel/sdist actually install and run standalone?
+
+Builds real distribution archives and installs them into a clean venv, as a
+final check that nothing in this repo's own dev setup is silently propping
+up the ``smairt`` command for an end user.
+"""
+
 from __future__ import annotations
 
 import subprocess

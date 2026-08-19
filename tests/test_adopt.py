@@ -1,3 +1,10 @@
+"""Tests for ``smairt adopt`` (src/smairt/adopt.py): wrapping a pre-existing project.
+
+Covers: the contract files it writes, the refusals (empty dir, already a
+SMAIRT project, looks like the tool's own checkout), and that it never moves
+or touches anything already in the adopted directory.
+"""
+
 from __future__ import annotations
 
 from datetime import date

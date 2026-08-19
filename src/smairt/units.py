@@ -1,3 +1,32 @@
+"""``smairt unit new`` — creates one "unit" of research work: a stage or a question.
+
+A unit is a folder under ``experiments/`` with a README (whose top holds a
+YAML frontmatter block — see :mod:`smairt.frontmatter`) plus, usually,
+``logs/``, ``out/``, and ``figures/`` subfolders. This module is the ONLY
+code that creates those folders; a researcher (or an assistant harness) is
+never supposed to ``mkdir`` one by hand, because this module is also what
+assigns the number (for a stage) or reads today's date (for a question) —
+being the sole creator is what keeps that numbering consistent.
+
+Two kinds of unit, named by :class:`UnitKind`:
+
+* **stage** — one step of the project's "spine" (the planned sequence of
+  work). Folder name: ``NN_slug`` (e.g. ``01_align_reads``). Numbers assign
+  automatically and only ever go up.
+* **question** — one exploratory probe, dated rather than numbered. Folder
+  name: ``YYYY-MM-DD_slug`` (e.g. ``2026-08-12_why-is-signal-low``).
+
+A third case — a *reference* unit (thin, README-only, pointing at code that
+already exists outside ``experiments/``) — is not a separate kind; it's what
+you get when ``ref_paths`` is passed to either creator function below (used
+by ``smairt adopt`` for pre-existing projects).
+
+This module also defines the schemas (:data:`STAGE_REQUIRED_FIELDS`,
+:data:`QUESTION_REQUIRED_FIELDS`, and the allowed ``status:`` values) that
+:mod:`smairt.check` validates every unit's frontmatter against — so field
+names and status values here and in ``check.py`` must always agree.
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -50,12 +79,21 @@ _REFERENCE_BODY = (
 
 
 class UnitKind(str, Enum):
+    """The two kinds of unit a researcher can create directly."""
+
     stage = "stage"
     question = "question"
 
 
 def next_stage_number(experiments_dir: Path) -> int:
-    """The next unused stage number, so ``smairt unit new`` is the sole numbering authority."""
+    """The next unused stage number, so ``smairt unit new`` is the sole numbering authority.
+
+    Looks at every folder name directly under ``experiments/``, takes the part
+    before the first underscore, and treats it as a number if it's all
+    digits (e.g. ``"02_align"`` -> ``2``). Ignores anything that doesn't look
+    like a stage (question folders start with a date, not a bare number).
+    Returns 1 for a project with no stages yet.
+    """
     numbers = []
     if experiments_dir.is_dir():
         for entry in experiments_dir.iterdir():
@@ -67,6 +105,12 @@ def next_stage_number(experiments_dir: Path) -> int:
 
 
 def _make_standard_subfolders(unit_dir: Path) -> None:
+    """Create ``logs/``, ``out/``, ``figures/`` inside a unit, each holding a ``.gitkeep``.
+
+    Git does not track empty folders, so an empty ``.gitkeep`` placeholder
+    file is what makes these subfolders actually show up once committed —
+    even before any real log or figure has been written into them.
+    """
     for name in _UNIT_SUBFOLDERS:
         folder = unit_dir / name
         folder.mkdir(parents=True, exist_ok=True)
@@ -82,6 +126,14 @@ def _receipt_fields(
     command: str | None,
     repo: str | None,
 ) -> dict[str, str]:
+    """Build the frontmatter fields for a "receipt" unit (one that ran an outside tool).
+
+    A receipt records enough to reproduce or audit an external tool's run
+    without copying the tool itself into the project: which tool, which
+    version, the exact command, and (optionally) where its source lives.
+    Missing text fields become empty strings rather than being left out, so
+    the frontmatter schema stays consistent across every receipt unit.
+    """
     if not tool:
         raise ValueError("--receipt requires --tool")
     return {
@@ -117,6 +169,10 @@ def create_stage(
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
 
+    # Passing --ref makes this a "reference" unit (case 3): thin, README-only,
+    # pointing at code/output that already lives outside experiments/. Every
+    # branch below checks is_reference to skip the run-oriented parts (a
+    # logs/ pointer, logs/out/figures subfolders, the run-report body).
     is_reference = bool(ref_paths)
     fields: dict[str, object] = {
         "kind": "stage",
@@ -145,6 +201,8 @@ def create_stage(
             "Filled in once this stage has output. If it holds variants, name the active one "
             "and why the others lost.\n"
         )
+    # write_once (not a plain write) means this errors instead of clobbering if
+    # the folder somehow already has a README — see smairt.fsutil.
     write_once(unit_dir / "README.md", frontmatter.render(fields) + body)
     if not is_reference:
         _make_standard_subfolders(unit_dir)
@@ -203,8 +261,10 @@ def create_question(
 
 
 def required_fields(kind: UnitKind) -> Sequence[str]:
+    """The frontmatter field names every unit of this ``kind`` must have. Used by `smairt check`."""
     return STAGE_REQUIRED_FIELDS if kind is UnitKind.stage else QUESTION_REQUIRED_FIELDS
 
 
 def allowed_statuses(kind: UnitKind) -> Sequence[str]:
+    """The legal ``status:`` values for this ``kind``. Used by `smairt check`."""
     return STAGE_STATUSES if kind is UnitKind.stage else QUESTION_STATUSES

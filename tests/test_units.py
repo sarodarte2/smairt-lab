@@ -1,3 +1,9 @@
+"""Tests for ``smairt unit new`` (src/smairt/units.py): creating stage/question units.
+
+Covers folder naming and numbering/dating, the standard subfolders, receipt
+units (--receipt/--tool/...), and reference units (--ref, case 3 adoption).
+"""
+
 from __future__ import annotations
 
 from datetime import date

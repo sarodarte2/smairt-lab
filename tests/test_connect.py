@@ -1,3 +1,11 @@
+"""Tests for ``smairt connect`` (src/smairt/connect.py): per-harness hook wiring.
+
+One section per harness (Claude Code, Codex, Cursor, OpenCode, Gemini CLI)
+plus the CI template and the shared idempotency/strict-mode behavior. Checks
+what gets written, that re-running is a no-op, and that an edited file is
+left alone with a warning rather than overwritten.
+"""
+
 from __future__ import annotations
 
 import json

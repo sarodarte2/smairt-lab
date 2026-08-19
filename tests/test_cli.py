@@ -1,3 +1,12 @@
+"""Tests for the ``smairt`` command line itself (src/smairt/cli.py).
+
+Uses Typer's ``CliRunner`` to invoke commands in-process (fast) and, for a
+couple of tests that need the real installed console script, ``subprocess``
+against the actual ``smairt`` executable. Checks flag parsing, error
+messages, and exit codes -- not the generated file content itself (that's
+covered by each command's own module's tests, e.g. test_project.py).
+"""
+
 from __future__ import annotations
 
 import json
