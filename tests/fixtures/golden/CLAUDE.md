@@ -1,0 +1,2 @@
+# SMAIRT
+@AGENTS.md

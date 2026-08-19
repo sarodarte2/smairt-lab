@@ -1,0 +1,21 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+.env
+
+# Editors and OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Large or generated data: uncomment patterns as this project needs them
+# *.bam
+# *.fastq.gz
+# *.h5ad

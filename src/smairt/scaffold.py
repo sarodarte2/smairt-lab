@@ -1,20 +1,37 @@
+"""The scaffold blueprint: a checked-in manifest of every path SMAIRT can generate.
+
+This module does not generate anything itself (``project.py`` and
+``units.py`` do that by formatting plain strings). Instead, it defines and
+loads ``assets/scaffold-blueprint.yaml`` — a hand-maintained list of every
+file/folder those generators are expected to produce, with metadata about who
+"owns" each one (tool guidance vs. researcher work) and whether it's always
+created or only for HPC projects.
+
+Why keep a separate manifest of what the code already does? So a reviewer (or
+CI, via ``scripts/scaffold_diff.py``) can diff two versions of the blueprint
+and see, in plain terms, exactly which generated paths were added, removed,
+renamed, or changed ownership — without having to read a diff of the
+generator code itself. :func:`diff_blueprints` is what powers that comparison.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 from typing import Literal, Mapping
 
 import yaml
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 AssetKind = Literal["directory", "file"]
 AssetOwnership = Literal[
     "tool-guidance", "editable-starter", "researcher-work", "historical-reference"
 ]
-AssetCondition = Literal["always", "paper", "hpc", "rigor"]
+AssetCondition = Literal["always", "hpc"]
 
 
 class ScaffoldAsset(BaseModel):
+    """One entry in the blueprint: a single generated file or folder."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -28,6 +45,12 @@ class ScaffoldAsset(BaseModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
+        """Reject anything that isn't a plain, safe relative path.
+
+        No absolute paths, no ``..`` segments (which could escape the
+        project folder), and no empty/``"."`` paths — every asset must name
+        a real, contained location under the project root.
+        """
         path = PurePosixPath(value)
         if path.is_absolute() or ".." in path.parts or value in {"", "."}:
             raise ValueError("scaffold asset paths must be safe relative paths")
@@ -35,6 +58,7 @@ class ScaffoldAsset(BaseModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> ScaffoldAsset:
+        """A file asset must name where its content comes from; a directory can't."""
         if self.kind == "file" and self.source is None:
             raise ValueError("file assets require a source")
         if self.kind == "directory" and self.source is not None:
@@ -43,6 +67,15 @@ class ScaffoldAsset(BaseModel):
 
 
 class ScaffoldBlueprint(BaseModel):
+    """The declared shape of the generated scaffold.
+
+    This is a manifest for review, not a template engine: ``smairt new`` and
+    ``smairt unit new`` render scaffold content directly (Part III, WP1 — plain
+    string formatting, no templating layer), and this file separately declares
+    every path they produce so ``scripts/scaffold_diff.py`` can flag product-surface
+    changes (added/removed/renamed paths, ownership or condition changes) for review.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     blueprint_version: int
@@ -50,6 +83,7 @@ class ScaffoldBlueprint(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_identity_and_paths(self) -> ScaffoldBlueprint:
+        """No two assets may share an id or a path — each must be unambiguous."""
         ids = [asset.id for asset in self.assets]
         paths = [asset.path for asset in self.assets]
         if len(ids) != len(set(ids)):
@@ -60,100 +94,22 @@ class ScaffoldBlueprint(BaseModel):
 
 
 def load_blueprint() -> ScaffoldBlueprint:
+    """Read and validate the checked-in ``assets/scaffold-blueprint.yaml``."""
     path = Path(__file__).parent / "assets" / "scaffold-blueprint.yaml"
     return ScaffoldBlueprint.model_validate(yaml.safe_load(path.read_text()))
-
-
-ASSISTANT_POINTERS = {
-    "zoo-code": "ZOO.md",
-    "claude-code": "CLAUDE.md",
-    "opencode": "AGENTS.md",
-    "codex": "AGENTS.md",
-    "pi": "AGENTS.md",
-    "cursor": ".cursor/rules/smairt.mdc",
-}
-
-
-def active_assets(contract: object, *, include_inactive: bool = False) -> list[ScaffoldAsset]:
-    capabilities = getattr(contract, "capabilities")
-
-    def enabled(condition: AssetCondition) -> bool:
-        if condition == "always":
-            return True
-        if condition == "rigor":
-            return any(getattr(contract, "rigor").model_dump().values())
-        state = capabilities[condition].state.value
-        return state == "enabled" or (include_inactive and state == "inactive")
-
-    return [asset for asset in load_blueprint().assets if enabled(asset.condition)]
-
-
-def asset_path(asset: ScaffoldAsset, contract: object) -> str:
-    if asset.path == "$assistant_pointer":
-        return ASSISTANT_POINTERS[getattr(contract, "assistant").value]
-    return asset.path
-
-
-def asset_ownership(contract: object, *, include_inactive: bool = False) -> dict[str, str]:
-    return {
-        asset_path(asset, contract): asset.ownership
-        for asset in active_assets(contract, include_inactive=include_inactive)
-    }
-
-
-def render_template_assets(contract: object, *, include_inactive: bool = False) -> dict[str, str]:
-    templates = Path(__file__).parent / "assets" / "scaffold"
-    environment = Environment(
-        loader=FileSystemLoader(str(templates)),
-        undefined=StrictUndefined,
-        keep_trailing_newline=True,
-    )
-    people = getattr(contract, "people")
-    context = {
-        "project": getattr(contract, "project"),
-        "researcher": people["researcher"],
-        "rigor": getattr(contract, "rigor"),
-    }
-    rendered: dict[str, str] = {}
-    for asset in active_assets(contract, include_inactive=include_inactive):
-        if asset.kind != "file" or asset.source in {"contract", "license", "assistant-pointer"}:
-            continue
-        assert asset.source is not None
-        source = templates / asset.source
-        rendered[asset_path(asset, contract)] = (
-            source.read_text()
-            if source.suffix == ".py"
-            else environment.get_template(asset.source).render(context)
-        )
-    return rendered
-
-
-def materialize_template_assets(
-    root: Path,
-    contract: object,
-    *,
-    include_inactive: bool = False,
-    missing_only: bool = True,
-) -> None:
-    for asset in active_assets(contract, include_inactive=include_inactive):
-        path = root / asset_path(asset, contract)
-        if asset.kind == "directory":
-            if path.exists() and not path.is_dir():
-                raise ValueError(f"cannot create scaffold directory because a file exists: {path}")
-            path.mkdir(parents=True, exist_ok=True)
-    for relative, content in render_template_assets(
-        contract, include_inactive=include_inactive
-    ).items():
-        path = root / relative
-        if missing_only and path.exists():
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
 
 
 def diff_blueprints(
     previous: Mapping[str, object], current: Mapping[str, object]
 ) -> dict[str, list[str]]:
+    """Compare two blueprint versions (as raw dicts) by asset id.
+
+    Matches assets across versions by their stable ``id`` (not their path,
+    since a path can change on purpose — that's a "rename"). Returns a dict
+    with five lists of human-readable strings: ``added``, ``removed``,
+    ``renamed``, ``ownership_changed``, ``condition_changed`` — the kinds of
+    change a reviewer most needs to notice between two scaffold versions.
+    """
     before = _entries_by_id(previous)
     after = _entries_by_id(current)
     before_ids = set(before)
@@ -181,6 +137,7 @@ def diff_blueprints(
 
 
 def _entries_by_id(data: Mapping[str, object]) -> dict[str, dict[str, str]]:
+    """Reshape a raw blueprint dict into ``{asset_id: {field: value}}`` for easy diffing."""
     raw = data.get("assets")
     if not isinstance(raw, list):
         raise ValueError("blueprint data must contain an assets list")

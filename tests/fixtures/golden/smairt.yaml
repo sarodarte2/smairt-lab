@@ -1,0 +1,10 @@
+schema_version: 2
+scaffold_version: 0.0.0-golden
+name: Golden Project
+researcher: Ada Lovelace
+description: A golden fixture project used to catch scaffold drift.
+created: 2026-01-01
+harnesses:
+- claude-code
+settings:
+  strict_hooks: false
