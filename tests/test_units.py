@@ -43,8 +43,8 @@ def test_create_stage_numbers_sequentially_and_zero_pads(tmp_path: Path) -> None
     first = create_stage(root, "Quality control")
     second = create_stage(root, "Differential expression")
 
-    assert first.name == "01_quality_control"
-    assert second.name == "02_differential_expression"
+    assert first.name == "01_quality-control"
+    assert second.name == "02_differential-expression"
 
 
 def test_create_stage_writes_standard_subfolders(tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_create_question_uses_todays_date_in_the_folder_name(tmp_path: Path) -> 
 
     question = create_question(root, "Does batch correction help?", created=date(2026, 3, 4))
 
-    assert question.name == "2026-03-04_does_batch_correction_help"
+    assert question.name == "2026-03-04_does-batch-correction-help"
 
 
 def test_create_question_readme_has_required_schema_fields_and_legal_status(

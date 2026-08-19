@@ -45,7 +45,7 @@ def test_scan_units_lists_every_unit_with_its_evidence(tmp_path: Path) -> None:
 
     assert [record.path for record in records] == [
         "experiments/01_alignment",
-        "experiments/2026-01-06_batch_effect_check",
+        "experiments/2026-01-06_batch-effect-check",
     ]
     alignment = records[0]
     assert alignment.kind == "stage"
@@ -69,7 +69,7 @@ def test_write_index_regenerates_the_table(tmp_path: Path) -> None:
     create_question(root, "Follow-up probe", created=date(2026, 1, 6))
     write_index(root)
     content = path.read_text()
-    assert "experiments/2026-01-06_follow_up_probe" in content
+    assert "experiments/2026-01-06_follow-up-probe" in content
 
 
 def test_write_index_overwrites_previous_content_even_though_it_is_generated(

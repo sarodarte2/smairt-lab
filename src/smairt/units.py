@@ -96,7 +96,7 @@ def create_stage(
     """Create ``experiments/NN_slug/`` — one step of the spine."""
     experiments_dir = project_root / "experiments"
     number = next_stage_number(experiments_dir)
-    unit_dir = experiments_dir / f"{number:02d}_{slugify(title, fallback='stage')}"
+    unit_dir = experiments_dir / f"{number:02d}_{slugify(title, fallback='stage', sep='-')}"
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
 
@@ -141,7 +141,7 @@ def create_question(
 ) -> Path:
     """Create ``experiments/YYYY-MM-DD_slug/`` — one exploratory probe."""
     today = created or date.today()
-    slug = slugify(title, fallback="question")
+    slug = slugify(title, fallback="question", sep="-")
     unit_dir = project_root / "experiments" / f"{today.isoformat()}_{slug}"
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
