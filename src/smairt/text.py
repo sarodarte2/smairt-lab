@@ -1,8 +1,9 @@
 """Turns free-text titles into filesystem-safe folder names ("slugs").
 
 Used across the codebase wherever a researcher's typed title (e.g. "Align
-reads to reference") needs to become part of a folder name (e.g. "align_reads
-to reference" -> ``align_reads-to-reference``). This is the only place that
+reads to reference") needs to become part of a folder name
+(``align_reads_to_reference`` for project folders, or
+``align-reads-to-reference`` inside unit names). This is the only place that
 logic lives, so every folder name in the project is built the same way.
 """
 

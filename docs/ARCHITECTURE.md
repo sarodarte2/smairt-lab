@@ -5,7 +5,8 @@ module's own docstring should be enough to orient.
 
 ## What SMAIRT is
 
-A command-line tool a researcher installs (`pip install smairt`) that scaffolds
+A command-line tool a researcher installs (currently from this repo, e.g.
+`uv tool install .`) that scaffolds
 a disciplined project layout and then keeps checking that the layout stays
 disciplined. It never watches or edits a researcher's actual analysis — it
 only manages the *structure* around it: folders, README frontmatter, and a
