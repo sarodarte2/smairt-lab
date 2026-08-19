@@ -352,44 +352,28 @@ def _check_frontmatter_schema(units: list[_Unit]) -> list[Finding]:
     findings: list[Finding] = []
     for unit in units:
         readme_rel = f"{unit.rel}/README.md"
+
+        # Every finding in this rule shares the same id and severity; only the
+        # message changes, so a tiny local helper keeps each check below to
+        # one line instead of a five-line Finding(...) call.
+        def flag(message: str) -> None:
+            findings.append(Finding(RULE_FRONTMATTER, ERROR, readme_rel, message))
+
         if unit.error is not None:
-            findings.append(
-                Finding(
-                    RULE_FRONTMATTER,
-                    ERROR,
-                    readme_rel,
-                    f"frontmatter block is missing or malformed: {unit.error}",
-                )
-            )
+            flag(f"frontmatter block is missing or malformed: {unit.error}")
             continue
         if unit.kind is None:
-            findings.append(
-                Finding(
-                    RULE_FRONTMATTER,
-                    ERROR,
-                    readme_rel,
-                    f"kind {unit.fields.get('kind')!r} is not a recognized unit kind",
-                )
-            )
+            flag(f"kind {unit.fields.get('kind')!r} is not a recognized unit kind")
             continue
         allowed = units_module.allowed_statuses(unit.kind)
         if unit.status not in allowed:
-            findings.append(
-                Finding(
-                    RULE_FRONTMATTER,
-                    ERROR,
-                    readme_rel,
-                    f"status {unit.status!r} is not legal for kind "
-                    f"'{unit.kind.value}' (expected one of {list(allowed)})",
-                )
+            flag(
+                f"status {unit.status!r} is not legal for kind "
+                f"'{unit.kind.value}' (expected one of {list(allowed)})"
             )
         for field in units_module.required_fields(unit.kind):
             if field not in unit.fields:
-                findings.append(
-                    Finding(
-                        RULE_FRONTMATTER, ERROR, readme_rel, f"missing required field '{field}'"
-                    )
-                )
+                flag(f"missing required field '{field}'")
     return findings
 
 
@@ -464,32 +448,24 @@ def _check_evidence_pointers(project_root: Path, units: list[_Unit]) -> list[Fin
         if unit.kind is None:
             continue
         readme_rel = f"{unit.rel}/README.md"
+
+        def flag(message: str) -> None:
+            findings.append(Finding(RULE_EVIDENCE_POINTERS, ERROR, readme_rel, message))
+
         closed = _is_closed(unit.kind, unit.status)
         for field in _POINTER_FIELDS:
             if field not in unit.fields:
                 continue
             targets = _as_targets(unit.fields[field])
             if not targets:
+                # An empty pointer only matters once the unit is closed --
+                # see _is_closed's docstring for why "closed" differs by kind.
                 if closed and field in ("script", "log"):
-                    findings.append(
-                        Finding(
-                            RULE_EVIDENCE_POINTERS,
-                            ERROR,
-                            readme_rel,
-                            f"closed unit's '{field}:' is empty",
-                        )
-                    )
+                    flag(f"closed unit's '{field}:' is empty")
                 continue
             for target in targets:
                 if not _pointer_resolves(unit.path, project_root, field, target, closed):
-                    findings.append(
-                        Finding(
-                            RULE_EVIDENCE_POINTERS,
-                            ERROR,
-                            readme_rel,
-                            f"'{field}: {target}' does not resolve to an existing path",
-                        )
-                    )
+                    flag(f"'{field}: {target}' does not resolve to an existing path")
     return findings
 
 
@@ -515,45 +491,21 @@ def _check_receipt_completeness(units: list[_Unit]) -> list[Finding]:
         if not tool:
             continue
         readme_rel = f"{unit.rel}/README.md"
+
+        def flag(message: str) -> None:
+            findings.append(Finding(RULE_RECEIPT_COMPLETENESS, ERROR, readme_rel, message))
+
         if not str(unit.fields.get("tool_version", "")).strip():
-            findings.append(
-                Finding(
-                    RULE_RECEIPT_COMPLETENESS,
-                    ERROR,
-                    readme_rel,
-                    "receipt unit ('tool:' set) has an empty 'tool_version:'",
-                )
-            )
+            flag("receipt unit ('tool:' set) has an empty 'tool_version:'")
         if not str(unit.fields.get("command", "")).strip():
-            findings.append(
-                Finding(
-                    RULE_RECEIPT_COMPLETENESS,
-                    ERROR,
-                    readme_rel,
-                    "receipt unit ('tool:' set) has an empty 'command:'",
-                )
-            )
+            flag("receipt unit ('tool:' set) has an empty 'command:'")
         targets = _as_targets(unit.fields.get("log"))
         if not targets:
-            findings.append(
-                Finding(
-                    RULE_RECEIPT_COMPLETENESS,
-                    ERROR,
-                    readme_rel,
-                    "receipt unit ('tool:' set) has no 'log:' pointer",
-                )
-            )
+            flag("receipt unit ('tool:' set) has no 'log:' pointer")
         else:
             missing = [target for target in targets if not (unit.path / target).exists()]
             if missing:
-                findings.append(
-                    Finding(
-                        RULE_RECEIPT_COMPLETENESS,
-                        ERROR,
-                        readme_rel,
-                        f"receipt unit's log does not exist: {', '.join(missing)}",
-                    )
-                )
+                flag(f"receipt unit's log does not exist: {', '.join(missing)}")
     return findings
 
 
