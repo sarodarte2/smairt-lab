@@ -10,6 +10,7 @@ from smairt import __version__
 from smairt import check as check_module
 from smairt import index as index_module
 from smairt import project as project_module
+from smairt import status as status_module
 from smairt import units as units_module
 from smairt.fsutil import PathExistsError
 from smairt.project import Harness
@@ -21,7 +22,7 @@ app = typer.Typer(
     help="Create and manage SMAIRT research workspaces.",
 )
 
-STUB_COMMANDS = ("status", "connect")
+STUB_COMMANDS = ("connect",)
 
 
 def _version_callback(value: bool) -> None:
@@ -135,9 +136,18 @@ def check(
 
 
 @app.command()
-def status() -> None:
-    """Show project orientation. Not yet implemented."""
-    _stub("status")
+def status(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of human-readable text."
+    ),
+) -> None:
+    """Show project orientation: focus, spine, live/closed questions, and warnings."""
+    root = _require_project_root("status")
+    report = status_module.build_status_report(root)
+    if json_output:
+        typer.echo(json.dumps(status_module.to_json(report), indent=2))
+    else:
+        typer.echo(status_module.render_human(report))
 
 
 @app.command()

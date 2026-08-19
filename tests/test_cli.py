@@ -56,7 +56,7 @@ def test_help_lists_the_full_command_surface() -> None:
     )
 
     assert result.returncode == 0
-    for command in (*STUB_COMMANDS, "new", "unit", "index", "check"):
+    for command in (*STUB_COMMANDS, "new", "unit", "status", "index", "check"):
         assert command in result.stdout
     for retired in ("open", "repair", "settings", "inspect", "regenerate", "paper", "hpc"):
         assert retired not in result.stdout
@@ -178,6 +178,52 @@ def test_cli_check_json_output_parses(tmp_path: Path, monkeypatch: pytest.Monkey
     payload = json.loads(result.output)
     assert payload["findings"] == []
     assert "summary" in payload
+
+
+def test_cli_status_runs_on_a_fresh_project_and_regenerates_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _check_project(tmp_path)
+    index_path = root / "results" / "INDEX.md"
+    before = index_path.read_text(encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    for heading in (
+        "Focus:",
+        "Next:",
+        "Spine:",
+        "Live questions:",
+        "Recently closed:",
+        "Warnings:",
+    ):
+        assert heading in result.output
+    assert index_path.read_text(encoding="utf-8") == before  # unchanged content, still regenerated
+
+
+def test_cli_status_json_output_parses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _check_project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["spine"] == []
+    assert "summary" in payload
+
+
+def test_cli_status_refuses_outside_a_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code != 0
+    assert "not a SMAIRT project" in result.output
 
 
 def test_cli_check_reports_status_drift_after_a_unit_changes(
