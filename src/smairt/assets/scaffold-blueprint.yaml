@@ -1,7 +1,162 @@
-# The declared shape of the generated scaffold.
+# The declared shape of the generated scaffold — a review manifest, not a render
+# source. `smairt new` and `smairt unit new` (src/smairt/project.py, units.py) render
+# content directly by string formatting; this file separately names every path they
+# produce so `scripts/scaffold_diff.py` can call out product-surface changes in review.
 #
-# WP0 (demolition) emptied this: the old scaffold's phase trees, ledgers, plans,
-# prompts, docs, and per-project helper scripts are gone. WP1 rebuilds the day-one
-# scaffold from the spec (Part II, ten items) and repopulates this file to match.
+# WP1 rebuilt the day-one scaffold from spec Part II (ten items). Conditional assets
+# (condition: hpc) are only written when the researcher opts in at `smairt new`.
 blueprint_version: 2
-assets: []
+assets:
+  - id: identity
+    path: smairt.yaml
+    kind: file
+    purpose: Project identity (schema_version, name, researcher, harnesses).
+    ownership: tool-guidance
+    condition: always
+    source: identity
+  - id: status
+    path: STATUS.md
+    kind: file
+    purpose: The one hand-maintained ledger — focus, next, open questions, decisions.
+    ownership: researcher-work
+    condition: always
+    source: status
+  - id: agents-placeholder
+    path: AGENTS.md
+    kind: file
+    purpose: Placeholder assistant contract; the full contract ships with WP5.
+    ownership: tool-guidance
+    condition: always
+    source: agents-placeholder
+  - id: claude-bridge
+    path: CLAUDE.md
+    kind: file
+    purpose: Two-line bridge importing AGENTS.md for Claude Code.
+    ownership: tool-guidance
+    condition: always
+    source: claude-bridge
+  - id: gitignore
+    path: .gitignore
+    kind: file
+    purpose: Ignore caches, environments, and editor/OS noise.
+    ownership: tool-guidance
+    condition: always
+    source: gitignore
+  - id: background-dir
+    path: background
+    kind: directory
+    purpose: Context, never code.
+    ownership: tool-guidance
+    condition: always
+  - id: background-readme
+    path: background/README.md
+    kind: file
+    purpose: Explains question.md, literature/, prior_work/.
+    ownership: tool-guidance
+    condition: always
+    source: background-readme
+  - id: background-question
+    path: background/question.md
+    kind: file
+    purpose: The project's stable big question.
+    ownership: researcher-work
+    condition: always
+    source: background-question
+  - id: background-literature-dir
+    path: background/literature
+    kind: directory
+    purpose: Papers and notes.
+    ownership: researcher-work
+    condition: always
+  - id: background-literature-keep
+    path: background/literature/.gitkeep
+    kind: file
+    purpose: Keeps the empty folder tracked in Git.
+    ownership: researcher-work
+    condition: always
+    source: gitkeep
+  - id: background-prior-work-dir
+    path: background/prior_work
+    kind: directory
+    purpose: Related prior efforts.
+    ownership: researcher-work
+    condition: always
+  - id: background-prior-work-keep
+    path: background/prior_work/.gitkeep
+    kind: file
+    purpose: Keeps the empty folder tracked in Git.
+    ownership: researcher-work
+    condition: always
+    source: gitkeep
+  - id: data-dir
+    path: data
+    kind: directory
+    purpose: One subfolder per dataset.
+    ownership: tool-guidance
+    condition: always
+  - id: data-readme
+    path: data/README.md
+    kind: file
+    purpose: Explains the per-dataset provenance-header convention.
+    ownership: tool-guidance
+    condition: always
+    source: data-readme
+  - id: scripts-dir
+    path: scripts
+    kind: directory
+    purpose: Shared, reusable code called by experiments with parameters.
+    ownership: tool-guidance
+    condition: always
+  - id: scripts-readme
+    path: scripts/README.md
+    kind: file
+    purpose: Explains the shared-script convention.
+    ownership: tool-guidance
+    condition: always
+    source: scripts-readme
+  - id: experiments-dir
+    path: experiments
+    kind: directory
+    purpose: The work — numbered stages and dated questions, single folder.
+    ownership: tool-guidance
+    condition: always
+  - id: experiments-readme
+    path: experiments/README.md
+    kind: file
+    purpose: Explains the stage/question naming and numbering convention.
+    ownership: tool-guidance
+    condition: always
+    source: experiments-readme
+  - id: results-dir
+    path: results
+    kind: directory
+    purpose: Holds the generated results index.
+    ownership: tool-guidance
+    condition: always
+  - id: results-index
+    path: results/INDEX.md
+    kind: file
+    purpose: GENERATED signpost from every log/figure to the unit that made it.
+    ownership: tool-guidance
+    condition: always
+    source: results-index
+  - id: hpc-dir
+    path: hpc
+    kind: directory
+    purpose: SLURM submission templates, opt-in.
+    ownership: editable-starter
+    condition: hpc
+  - id: hpc-readme
+    path: hpc/README.md
+    kind: file
+    purpose: Explains the SLURM template convention.
+    ownership: tool-guidance
+    condition: hpc
+    source: hpc-readme
+  - id: hpc-template
+    path: hpc/submit.slurm.example
+    kind: file
+    purpose: A commented SLURM submission template to copy and edit.
+    ownership: editable-starter
+    condition: hpc
+    source: hpc-template

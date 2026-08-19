@@ -10,7 +10,7 @@ AssetKind = Literal["directory", "file"]
 AssetOwnership = Literal[
     "tool-guidance", "editable-starter", "researcher-work", "historical-reference"
 ]
-AssetCondition = Literal["always"]
+AssetCondition = Literal["always", "hpc"]
 
 
 class ScaffoldAsset(BaseModel):
@@ -44,9 +44,11 @@ class ScaffoldAsset(BaseModel):
 class ScaffoldBlueprint(BaseModel):
     """The declared shape of the generated scaffold.
 
-    WP0 leaves this empty: the ten-item day-one scaffold (spec Part II) is WP1's job.
-    The model and its loader survive so WP1 can describe the new scaffold the same way,
-    and so ``scripts/scaffold_diff.py`` keeps working across the transition.
+    This is a manifest for review, not a template engine: ``smairt new`` and
+    ``smairt unit new`` render scaffold content directly (Part III, WP1 — plain
+    string formatting, no templating layer), and this file separately declares
+    every path they produce so ``scripts/scaffold_diff.py`` can flag product-surface
+    changes (added/removed/renamed paths, ownership or condition changes) for review.
     """
 
     model_config = ConfigDict(extra="forbid")
