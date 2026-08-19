@@ -1,4 +1,0 @@
-interface:
-  display_name: "SMAIRT Paper Overlay"
-  short_description: "Map SMAIRT research evidence to publication sections"
-  default_prompt: "Use $smairt-paper-driven to map my SMAIRT study evidence into the optional Paper workspace."

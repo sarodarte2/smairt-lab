@@ -1,4 +1,0 @@
-interface:
-  display_name: "SMAIRT Research"
-  short_description: "Scientific-method AI research workflow"
-  default_prompt: "Use $smairt-research to design the next testable research iteration."

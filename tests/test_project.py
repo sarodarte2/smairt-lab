@@ -128,10 +128,18 @@ def test_paper_opt_in_adds_a_status_open_question_and_nothing_else(tmp_path: Pat
     assert with_files == without_files
 
 
-def test_generated_day_one_prose_is_under_the_150_line_budget(tmp_path: Path) -> None:
+def test_agents_md_is_under_the_120_line_budget(tmp_path: Path) -> None:
     root = _create(tmp_path)
 
-    markdown_files = sorted(root.rglob("*.md"))
+    agents_lines = len((root / "AGENTS.md").read_text().splitlines())
+
+    assert agents_lines <= 120, f"AGENTS.md is {agents_lines} lines"
+
+
+def test_other_generated_day_one_prose_is_under_the_150_line_budget(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+
+    markdown_files = sorted(p for p in root.rglob("*.md") if p.name != "AGENTS.md")
     total_lines = sum(len(path.read_text().splitlines()) for path in markdown_files)
 
     assert total_lines < 150, f"{total_lines} lines across {[str(p) for p in markdown_files]}"
