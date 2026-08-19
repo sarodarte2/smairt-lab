@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
+
+STUB_COMMANDS = ("new", "check", "status", "connect", "unit")
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -38,47 +39,17 @@ def main() -> None:
     if installed.returncode:
         raise SystemExit(installed.stderr)
     smairt = environment / "bin" / "smairt"
-    destination = workspace / "representative-project"
-    created = run(
-        [
-            str(smairt),
-            "new",
-            str(destination),
-            "--name",
-            "Release Smoke Project",
-            "--slug",
-            "release_smoke_project",
-            "--description",
-            "A representative isolated release smoke project.",
-            "--researcher",
-            "Release Tester",
-            "--domain",
-            "Not sure yet",
-            "--phase",
-            "downloaded",
-            "--assistant",
-            "opencode",
-            "--accept-license",
-            "--paper",
-            "--hpc",
-            "--no-git",
-        ]
-    )
-    if created.returncode:
-        raise SystemExit(created.stderr)
-    for helper in ("new_iteration.py", "new_track.py", "select_result.py", "new_utility.py"):
-        helped = run([str(python), f"scripts/{helper}", "--help"], cwd=destination)
-        if helped.returncode:
-            raise SystemExit(helped.stderr or helped.stdout)
-    checked = run([str(smairt), "check", str(destination), "--json"])
-    if checked.returncode:
-        raise SystemExit(checked.stderr or checked.stdout)
-    try:
-        check_payload = json.loads(checked.stdout)
-    except json.JSONDecodeError as error:
-        raise SystemExit(f"Project Check did not return JSON: {error}") from error
-    if check_payload != {"issues": [], "ok": True, "repairs": []}:
-        raise SystemExit(f"Unexpected Project Check result: {checked.stdout}")
+    version = run([str(smairt), "--version"])
+    if version.returncode:
+        raise SystemExit(version.stderr or version.stdout)
+    if not version.stdout.strip().startswith("smairt "):
+        raise SystemExit(f"Unexpected --version output: {version.stdout!r}")
+    for command in STUB_COMMANDS:
+        stub = run([str(smairt), command])
+        if stub.returncode == 0:
+            raise SystemExit(f"'{command}' was expected to exit nonzero until it ships.")
+        if command not in stub.stdout:
+            raise SystemExit(f"'{command}' did not name itself in its stub message.")
 
 
 if __name__ == "__main__":

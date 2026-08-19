@@ -5,32 +5,15 @@ from pathlib import Path
 from smairt.scaffold import diff_blueprints, load_blueprint
 
 
-def test_scaffold_blueprint_is_a_complete_readable_asset_declaration() -> None:
+def test_scaffold_blueprint_loads_and_is_empty_pending_wp1() -> None:
+    """WP0 demolished the old scaffold; WP1 rebuilds it from spec Part II.
+
+    Until then the blueprint carries no assets, but the loader and its schema keep
+    working so WP1 can describe the new ten-item scaffold the same way.
+    """
     blueprint = load_blueprint()
 
-    ids = [asset.id for asset in blueprint.assets]
-    paths = [asset.path for asset in blueprint.assets]
-    assert len(ids) == len(set(ids))
-    assert len(paths) == len(set(paths))
-    assert {asset.condition for asset in blueprint.assets} == {"always", "paper", "hpc", "rigor"}
-    assert {asset.ownership for asset in blueprint.assets} == {
-        "tool-guidance",
-        "editable-starter",
-        "researcher-work",
-    }
-    assert {asset.path for asset in blueprint.assets} >= {
-        "README.md",
-        "smairt.yaml",
-        "data/synthetic",
-        "data/downloaded",
-        "data/real",
-        "experiments/01_synthetic",
-        "experiments/02_downloaded",
-        "experiments/03_real_data",
-        "analysis/RIGOR.md",
-        "FINAL_MANIFEST.md",
-        "hpc/templates/slurm_basic.sh",
-    }
+    assert blueprint.assets == []
 
 
 def test_every_blueprint_file_source_exists_in_the_installed_package() -> None:

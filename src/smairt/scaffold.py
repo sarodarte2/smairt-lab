@@ -4,14 +4,13 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, Mapping
 
 import yaml
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 AssetKind = Literal["directory", "file"]
 AssetOwnership = Literal[
     "tool-guidance", "editable-starter", "researcher-work", "historical-reference"
 ]
-AssetCondition = Literal["always", "paper", "hpc", "rigor"]
+AssetCondition = Literal["always"]
 
 
 class ScaffoldAsset(BaseModel):
@@ -43,6 +42,13 @@ class ScaffoldAsset(BaseModel):
 
 
 class ScaffoldBlueprint(BaseModel):
+    """The declared shape of the generated scaffold.
+
+    WP0 leaves this empty: the ten-item day-one scaffold (spec Part II) is WP1's job.
+    The model and its loader survive so WP1 can describe the new scaffold the same way,
+    and so ``scripts/scaffold_diff.py`` keeps working across the transition.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     blueprint_version: int
@@ -62,93 +68,6 @@ class ScaffoldBlueprint(BaseModel):
 def load_blueprint() -> ScaffoldBlueprint:
     path = Path(__file__).parent / "assets" / "scaffold-blueprint.yaml"
     return ScaffoldBlueprint.model_validate(yaml.safe_load(path.read_text()))
-
-
-ASSISTANT_POINTERS = {
-    "zoo-code": "ZOO.md",
-    "claude-code": "CLAUDE.md",
-    "opencode": "AGENTS.md",
-    "codex": "AGENTS.md",
-    "pi": "AGENTS.md",
-    "cursor": ".cursor/rules/smairt.mdc",
-}
-
-
-def active_assets(contract: object, *, include_inactive: bool = False) -> list[ScaffoldAsset]:
-    capabilities = getattr(contract, "capabilities")
-
-    def enabled(condition: AssetCondition) -> bool:
-        if condition == "always":
-            return True
-        if condition == "rigor":
-            return any(getattr(contract, "rigor").model_dump().values())
-        state = capabilities[condition].state.value
-        return state == "enabled" or (include_inactive and state == "inactive")
-
-    return [asset for asset in load_blueprint().assets if enabled(asset.condition)]
-
-
-def asset_path(asset: ScaffoldAsset, contract: object) -> str:
-    if asset.path == "$assistant_pointer":
-        return ASSISTANT_POINTERS[getattr(contract, "assistant").value]
-    return asset.path
-
-
-def asset_ownership(contract: object, *, include_inactive: bool = False) -> dict[str, str]:
-    return {
-        asset_path(asset, contract): asset.ownership
-        for asset in active_assets(contract, include_inactive=include_inactive)
-    }
-
-
-def render_template_assets(contract: object, *, include_inactive: bool = False) -> dict[str, str]:
-    templates = Path(__file__).parent / "assets" / "scaffold"
-    environment = Environment(
-        loader=FileSystemLoader(str(templates)),
-        undefined=StrictUndefined,
-        keep_trailing_newline=True,
-    )
-    people = getattr(contract, "people")
-    context = {
-        "project": getattr(contract, "project"),
-        "researcher": people["researcher"],
-        "rigor": getattr(contract, "rigor"),
-    }
-    rendered: dict[str, str] = {}
-    for asset in active_assets(contract, include_inactive=include_inactive):
-        if asset.kind != "file" or asset.source in {"contract", "license", "assistant-pointer"}:
-            continue
-        assert asset.source is not None
-        source = templates / asset.source
-        rendered[asset_path(asset, contract)] = (
-            source.read_text()
-            if source.suffix == ".py"
-            else environment.get_template(asset.source).render(context)
-        )
-    return rendered
-
-
-def materialize_template_assets(
-    root: Path,
-    contract: object,
-    *,
-    include_inactive: bool = False,
-    missing_only: bool = True,
-) -> None:
-    for asset in active_assets(contract, include_inactive=include_inactive):
-        path = root / asset_path(asset, contract)
-        if asset.kind == "directory":
-            if path.exists() and not path.is_dir():
-                raise ValueError(f"cannot create scaffold directory because a file exists: {path}")
-            path.mkdir(parents=True, exist_ok=True)
-    for relative, content in render_template_assets(
-        contract, include_inactive=include_inactive
-    ).items():
-        path = root / relative
-        if missing_only and path.exists():
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
 
 
 def diff_blueprints(
