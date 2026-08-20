@@ -58,7 +58,12 @@ day-one scaffold's text (`_AGENTS_TEMPLATE`, `_GITIGNORE`, the various
 unit README's frontmatter + body inline in `create_stage`/`create_question`.
 `results/INDEX.md` is the one exception: it is *derived*, not a skeleton, so
 `index.py` regenerates it fresh on every relevant command instead of writing
-it once.
+it once. The eight `smairt-*` skills are the other exception in the other
+direction: their text lives in `src/smairt/assets/skills/`, not in
+`connect.py` — `connect.py` only wraps each one (a provenance comment, and an
+invocation-policy field for the one skill that needs it) on the way into a
+harness's skills directory. See `skills.py`'s docstring for why that text is
+read through `importlib.resources` rather than a path built from `__file__`.
 
 ## How a finding travels from a rule to the terminal
 
@@ -89,8 +94,12 @@ docstring's table, and call it from `run_checks()`. An advisory-only rule
 
 **A new harness for `smairt connect`**: add a value to the `Harness` enum in
 `project.py`, write a `_render_<name>_*` function plus a `_connect_<name>`
-function in `connect.py` following the existing harnesses' shape, and add it
-to the `_HARNESS_HANDLERS` dispatch table at the bottom of that file.
+function in `connect.py` following the existing harnesses' shape — including a
+call to `_install_skills(project_root, root, builder)`, where `root` is
+`_SKILLS_ROOT_CLAUDE` if the harness reads `.claude/skills/` or
+`_SKILLS_ROOT_SHARED` if it reads `.agents/skills/` (five of six harnesses do;
+see `connect.py`'s "Skills delivery" docstring section) — and add it to the
+`_HARNESS_HANDLERS` dispatch table at the bottom of that file.
 
 ## Tests
 

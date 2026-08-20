@@ -88,7 +88,15 @@ Verified against the `v2-rebuild` working tree:
 
 - [Ship the skills inside the package](issues/11-ship-the-skills-in-the-package.md) — the eight skills now live at `src/smairt/assets/skills/`, resolved through `src/smairt/skills.py` via `importlib.resources`; verified present in both wheel and sdist and readable from an installed venv, with the assertion wired into `smoke_install.py` and therefore into CI. Ticket premise partly wrong: `pyproject.toml` needed no change (hatchling already ships tracked files under `src/smairt`), and `README.md` never referenced the old path — the `git mv` alone was the fix.
 
+- [Deliver the skills through `smairt connect`](issues/09-deliver-skills-through-connect.md) — one `_install_skills()` helper on the existing dispatch, two paths (`.claude/skills/` for Claude Code, `.agents/skills/` for the other five), copied not referenced, with a provenance notice that never names a harness so the shared root stays byte-identical and idempotent. ADR 0004 records it. **Codex's documented policy file was found to remove the skill entirely rather than only stop auto-invocation (reproduced independently against codex-cli 0.146.0) and is deliberately not written** — `smairt-adversarial-review` is explicit-invocation-only, so that file would delete the mechanism, not enforce it. Enforcement is real on Claude Code, Cursor, and pi; prose elsewhere.
+
 ## Not yet specified
+
+- **A generic notice channel on `ConnectResult`** — per-harness caveats
+  (pi's trust prompt, Codex's restart requirement, OpenCode's lack of a slash
+  command) have nowhere to surface today. A researcher on pi can have every file
+  written correctly and still see no skills, because the trust prompt was never
+  answered, and `connect` says nothing about it.
 
 - **Whether `smairt status` / `smairt check` output itself reads well** to the floor
   audience — the daily surface, never yet judged against that reader.

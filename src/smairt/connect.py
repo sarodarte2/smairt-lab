@@ -18,10 +18,48 @@ Two things every generated file does:
 
 Public entry points
 --------------------
-:func:`connect` — bridge + hook wiring for one harness.
+:func:`connect` — bridge + hook wiring, and skills, for one harness.
 :func:`connect_ci` — the GitHub Actions template (the enforcement floor).
 :func:`read_strict_hooks` — reads ``smairt.yaml``'s ``settings.strict_hooks``,
 used by the CLI to decide whether to also emit the pre-tool blocking hook.
+
+Skills delivery
+----------------
+Every ``_connect_<harness>`` also copies the eight ``smairt-*`` skills
+(``src/smairt/assets/skills/``, read through :mod:`smairt.skills` — never a
+path built from ``__file__``, which would break outside a source checkout)
+into that harness's own skills surface, via the shared :func:`_install_skills`
+helper. Two targets cover all six harnesses: ``.claude/skills/`` for Claude
+Code, the one harness with no documented ``.agents/`` support, and
+``.agents/skills/`` for the other five (Codex's *only* repo path; Gemini
+CLI's higher-precedence alias; a documented location for Cursor, OpenCode,
+and pi). Full findings:
+``.scratch/approachable-smairt/research/03-harness-skills-delivery.md``.
+
+**Copied, not referenced** — decisively, not by default. No harness has a
+project-local "also read skills from this path" setting (Codex's
+``[[skills.config]]`` disables named skills; it doesn't add search roots), so
+reference is not expressible in four of six harnesses. A reference would also
+resolve to a per-venv ``site-packages`` path that breaks for the second
+person who clones the project. Copies drift on a ``smairt`` upgrade instead —
+the accepted cost, mitigated by a provenance comment
+(:func:`_skill_provenance_notice`) in every installed ``SKILL.md`` naming the
+"delete the directory and re-run ``smairt connect``" remedy, inserted *after*
+the closing frontmatter delimiter, never before it (Cursor and OpenCode only
+recognize frontmatter that opens on line 1).
+
+**Researcher-invoked-only, enforced, not just asserted.** Of the eight
+skills, only ``smairt-adversarial-review`` says "Researcher-invoked only —
+never run this unprompted" — one of this project's three anti-bias
+mechanisms, alongside ``AGENTS.md``'s stakes and explanation rules. The
+``disable-model-invocation: true`` frontmatter field gives that sentence a
+real mechanism on the three harnesses that honor it (Claude Code, Cursor, pi)
+instead of leaving it on the honor system; the other three fall back to the
+prose, as they always have. Codex has its own mechanism and it is deliberately
+NOT used — see the "Judgment calls" note below; see also
+:data:`_RESEARCHER_INVOKED_ONLY`. The other seven skills stay model-invocable
+with the plain two-field frontmatter every harness accepts unmodified —
+that's the entire point of e.g. ``smairt-orient`` firing on its own.
 
 Idempotency and respect for researcher edits
 ---------------------------------------------
@@ -86,6 +124,31 @@ Judgment calls a reviewer should know about
 * The CI workflow content is standard GitHub Actions boilerplate (checkout +
   setup-python + ``pip install smairt`` + ``smairt check``), not sourced from
   the harness research file (CI was out of that file's scope).
+* Codex skill discovery was smoke-tested by hand against a real, installed
+  Codex CLI (``codex-cli 0.146.0``) before this shipped, not just source-read —
+  a vendor tracker issue (https://github.com/openai/codex/issues/16012)
+  reports repo-local ``.agents/skills`` not being injected into a session even
+  though ``codex-rs/core-skills/src/loader.rs`` implements exactly that
+  discovery. **Confirmed working**: ``codex debug prompt-input`` (renders the
+  model-visible prompt without needing a live model call) showed a skill
+  dropped into a throwaway project's ``.agents/skills/<name>/SKILL.md`` listed
+  in the injected ``<skills_instructions>`` block by name, description, and
+  file path — codex#16012 does not reproduce here.
+* **Codex's ``agents/openai.yaml`` policy file is deliberately not written.**
+  It is the documented way to stop Codex auto-selecting a skill
+  (``policy: allow_implicit_invocation: false``, per
+  https://learn.chatgpt.com/docs/build-skills) and would be the natural Codex
+  counterpart to ``disable-model-invocation``. Measured against
+  ``codex-cli 0.146.0``, it does something else: the skill disappears from the
+  injected list **entirely**, so it cannot be invoked explicitly either.
+  Isolated by bisection — an ``agents/openai.yaml`` carrying only an
+  ``interface:`` block leaves the skill visible; adding ``policy:``, alone or
+  alongside ``interface:``, is what makes it vanish. ``smairt-adversarial-review``
+  has no mode of use *except* explicit researcher invocation, so on Codex that
+  file would not constrain the skill, it would delete it — trading a working
+  anti-bias mechanism for no mechanism at all. Codex therefore falls back to
+  the SKILL.md prose, exactly like Gemini CLI and OpenCode. Revisit if a
+  future Codex release makes the documented behavior real.
 * Scoping guarantee: every file this module writes lands under the project
   root it was given — never ``$HOME`` or a harness's global config file (e.g.
   ``~/.claude/settings.json``, ``~/.cursor/hooks.json``). This is enforced,
@@ -105,8 +168,10 @@ from typing import Any, Callable
 
 import yaml
 
+from smairt import __version__
 from smairt.fsutil import write_or_warn
 from smairt.project import CLAUDE_BRIDGE, Harness
+from smairt.skills import list_skills, read_skill
 
 # --- public result type -------------------------------------------------------
 
@@ -327,6 +392,128 @@ def _record_harness(project_root: Path, harness: Harness, builder: _ResultBuilde
     builder.written.append("smairt.yaml")
 
 
+# --- Skills -----------------------------------------------------------------------
+# Verified shape: every harness converged on directory-per-skill + a SKILL.md with
+# YAML frontmatter -- the Agent Skills open standard (agentskills.io). Two
+# project-local paths reach all six: .claude/skills/<name>/SKILL.md for Claude
+# Code (the one harness whose docs enumerate skill locations without .agents/),
+# and .agents/skills/<name>/SKILL.md for the other five -- Codex's *only* repo
+# path, Gemini CLI's higher-precedence alias, and a documented location for
+# Cursor, OpenCode, and pi. Full findings and per-harness sources:
+# .scratch/approachable-smairt/research/03-harness-skills-delivery.md.
+
+_SKILLS_ROOT_CLAUDE = ".claude/skills"
+_SKILLS_ROOT_SHARED = ".agents/skills"
+"""The two skill-install targets. Not a per-harness dict, on purpose: keeping
+just these two names makes it obvious in every call site below which of the
+two shapes a harness gets, and keeps `_install_skills` itself harness-blind --
+it only ever sees "claude" or "shared", never which of the five shared-target
+harnesses triggered the write. That matters for idempotency: nothing about the
+rendered bytes may depend on which harness wrote them, or the second harness
+connected to the same project would see a spurious "differs" warning instead
+of the free `skipped` the module docstring promises.
+"""
+
+_RESEARCHER_INVOKED_ONLY = frozenset({"smairt-adversarial-review"})
+"""Skills that must never fire without the researcher explicitly asking for them.
+
+This is one of the project's three anti-bias mechanisms, alongside AGENTS.md's
+stakes rule and explanation rule -- and until now it has rested entirely on
+prose: `smairt-adversarial-review`'s own SKILL.md says "Researcher-invoked
+only -- never run this unprompted" with nothing enforcing it. Three harnesses
+can actually enforce it -- Claude Code, Cursor, and pi, via the
+``disable-model-invocation`` frontmatter field :func:`_render_skill_md` adds
+below. The rest fall back to the prose, same as before; Codex's own mechanism
+would remove the skill outright on the version tested, so it is deliberately
+not used (see the module docstring's "Judgment calls"). The other seven
+shipped skills are meant to fire on their own -- that's the entire point of
+`smairt-orient` running "always", or `smairt-new-question` catching a probe
+before it starts -- so this set has exactly one member, not eight.
+"""
+
+
+def _split_frontmatter(skill_md: str) -> tuple[str, str]:
+    """Split a skill's Markdown into ``(frontmatter incl. trailing "---\\n", rest)``.
+
+    Looks for the closing ``---`` on its own line rather than assuming a fixed
+    line count, so this keeps working if a skill's frontmatter grows a field.
+    Every shipped skill starts with a frontmatter block (asserted by
+    ``tests/test_skills.py``), so a skill missing the closing delimiter would
+    be a packaging bug, not a normal input -- hence the plain ``ValueError``
+    rather than a quieter fallback.
+    """
+    lines = skill_md.splitlines(keepends=True)
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\n") == "---":
+            return "".join(lines[: i + 1]), "".join(lines[i + 1 :])
+    raise ValueError("skill Markdown has no closing '---' frontmatter delimiter")
+
+
+def _skill_provenance_notice(root: str) -> str:
+    """The "this is a copy, here's how to refresh it" comment every installed skill carries.
+
+    Never names a specific harness for :data:`_SKILLS_ROOT_SHARED`: doing so
+    would make the same skill's rendered bytes differ depending on which
+    harness happened to write them first, breaking the free idempotency the
+    shared target is supposed to get (see the module docstring's "Skills
+    delivery" section). Claude Code's copy is the one harness-specific
+    exception, since :data:`_SKILLS_ROOT_CLAUDE` is only ever written by
+    :func:`_connect_claude_code`.
+    """
+    command = (
+        "smairt connect claude-code" if root == _SKILLS_ROOT_CLAUDE else "smairt connect <harness>"
+    )
+    return (
+        f"<!-- Copied by `{command}` from the skill smairt {__version__} ships --\n"
+        "     not referenced, so it goes stale the next time smairt is upgraded.\n"
+        "     If you edited this file on purpose, ignore this notice. If you\n"
+        f"     didn't, delete this skill's directory and re-run `{command}` to\n"
+        "     reinstall the version smairt currently ships. -->"
+    )
+
+
+def _render_skill_md(root: str, name: str, body: str) -> str:
+    """Render one shipped skill's ``SKILL.md`` (:func:`smairt.skills.read_skill`) for ``root``.
+
+    Two things ever differ from the shipped bytes:
+
+    * The provenance notice above is always inserted right after the closing
+      frontmatter delimiter, never before the opening one -- Cursor and
+      OpenCode only recognize frontmatter that starts on the file's first
+      line, so prepending anything would silently break the skill everywhere
+      but Claude Code.
+    * For :data:`_RESEARCHER_INVOKED_ONLY` skills, ``disable-model-invocation:
+      true`` is inserted into the frontmatter itself. Claude Code, Cursor, and
+      pi all honor that field (per the harness research); it's simply an
+      unrecognized key everywhere else -- OpenCode's frontmatter parser is a
+      documented closed set that ignores unknown keys rather than rejecting
+      them, and neither Codex nor Gemini CLI's docs describe rejecting extra
+      frontmatter either. So this is a real enforcement mechanism on three
+      harnesses and a no-op, not a break, on the rest.
+    """
+    frontmatter, rest = _split_frontmatter(body)
+    if name in _RESEARCHER_INVOKED_ONLY:
+        frontmatter = frontmatter[: -len("---\n")] + "disable-model-invocation: true\n---\n"
+    return f"{frontmatter}\n{_skill_provenance_notice(root)}\n{rest}"
+
+
+def _install_skills(project_root: Path, root: str, builder: _ResultBuilder) -> None:
+    """Copy every skill smairt ships into ``root``, one ``<name>/SKILL.md`` at a time.
+
+    Copy, not reference (see the module docstring's "Skills delivery"
+    section): no harness has a project-local "also read skills from this
+    path" setting, and a reference would resolve to a per-venv
+    ``site-packages`` path that breaks for the second person who clones the
+    project. Goes through :func:`smairt.skills.list_skills` /
+    :func:`smairt.skills.read_skill` -- never a path built from ``__file__``
+    -- so this keeps working whether ``smairt`` is running from a wheel, an
+    editable install, or a zip.
+    """
+    for name in list_skills():
+        rendered = _render_skill_md(root, name, read_skill(name))
+        _write_or_warn(project_root, f"{root}/{name}/SKILL.md", rendered, builder)
+
+
 # --- Claude Code ----------------------------------------------------------------
 # Verified shape: .claude/settings.json hooks, PascalCase events, entries of
 # {"matcher": ..., "hooks": [{"type": "command", "command": ...}]}. A PreToolUse
@@ -357,9 +544,10 @@ def _render_claude_settings(strict: bool) -> str:
 
 
 def _connect_claude_code(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write Claude Code's two wiring files: the CLAUDE.md bridge and its hook config."""
+    """Write Claude Code's wiring: the CLAUDE.md bridge, its hook config, and its skills."""
     _write_or_warn(project_root, "CLAUDE.md", CLAUDE_BRIDGE, builder)
     _write_or_warn(project_root, ".claude/settings.json", _render_claude_settings(strict), builder)
+    _install_skills(project_root, _SKILLS_ROOT_CLAUDE, builder)
 
 
 # --- Codex ------------------------------------------------------------------
@@ -389,8 +577,9 @@ def _render_codex_hooks(strict: bool) -> str:
 
 
 def _connect_codex(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write Codex's one wiring file: its hook config."""
+    """Write Codex's hook config, plus its (shared) copy of smairt's skills."""
     _write_or_warn(project_root, ".codex/hooks.json", _render_codex_hooks(strict), builder)
+    _install_skills(project_root, _SKILLS_ROOT_SHARED, builder)
 
 
 # --- Cursor -------------------------------------------------------------------
@@ -436,9 +625,10 @@ This is a SMAIRT scientific research workspace, not a software project.
 
 
 def _connect_cursor(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write Cursor's two wiring files: its hook config and its always-applied rule."""
+    """Write Cursor's hook config, its always-applied rule, and its (shared) skills copy."""
     _write_or_warn(project_root, ".cursor/hooks.json", _render_cursor_hooks(strict), builder)
     _write_or_warn(project_root, ".cursor/rules/smairt.mdc", _CURSOR_RULE, builder)
+    _install_skills(project_root, _SKILLS_ROOT_SHARED, builder)
 
 
 # --- OpenCode -------------------------------------------------------------------
@@ -490,10 +680,11 @@ def _render_opencode_plugin(strict: bool) -> str:
 
 
 def _connect_opencode(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write OpenCode's one wiring file: its plugin module."""
+    """Write OpenCode's plugin module, plus its (shared) copy of smairt's skills."""
     _write_or_warn(
         project_root, ".opencode/plugins/smairt-check.ts", _render_opencode_plugin(strict), builder
     )
+    _install_skills(project_root, _SKILLS_ROOT_SHARED, builder)
 
 
 # --- pi -------------------------------------------------------------------------
@@ -546,10 +737,11 @@ def _render_pi_extension(strict: bool) -> str:
 
 
 def _connect_pi(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write pi's one wiring file: its project-local extension."""
+    """Write pi's project-local extension, plus its (shared) copy of smairt's skills."""
     _write_or_warn(
         project_root, ".pi/extensions/smairt-check.ts", _render_pi_extension(strict), builder
     )
+    _install_skills(project_root, _SKILLS_ROOT_SHARED, builder)
 
 
 # --- Gemini CLI -----------------------------------------------------------------
@@ -602,8 +794,11 @@ def _connect_gemini(project_root: Path, strict: bool, builder: _ResultBuilder) -
     already have a populated settings.json for unrelated reasons, so this
     function reads the existing JSON (if any) and adds only the keys SMAIRT
     needs that are missing — never touching a key that's already there,
-    smairt's or the researcher's.
+    smairt's or the researcher's. Skill installation (its own (shared) copy
+    of smairt's skills) runs first and unconditionally, since it's unrelated
+    to whichever of settings.json's several early-return branches below fires.
     """
+    _install_skills(project_root, _SKILLS_ROOT_SHARED, builder)
     relative = ".gemini/settings.json"
     path = project_root / relative
     comment = _gemini_comment(strict)

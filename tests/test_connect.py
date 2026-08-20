@@ -1,9 +1,13 @@
-"""Tests for ``smairt connect`` (src/smairt/connect.py): per-harness hook wiring.
+"""Tests for ``smairt connect`` (src/smairt/connect.py): per-harness hook + skills wiring.
 
 One section per harness (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, pi)
 plus the CI template and the shared idempotency/strict-mode behavior. Checks
 what gets written, that re-running is a no-op, and that an edited file is
-left alone with a warning rather than overwritten.
+left alone with a warning rather than overwritten. A dedicated "skills"
+section covers the two-path dispatch (``.claude/skills/`` vs the shared
+``.agents/skills/``), the provenance notice, ``disable-model-invocation``
+enforcement for ``smairt-adversarial-review``, and the free idempotency the
+shared target gets when a second harness is connected.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from typer.testing import CliRunner
 from smairt import connect as connect_module
 from smairt.cli import app
 from smairt.project import Harness, create_project
+from smairt.skills import list_skills
 
 runner = CliRunner()
 
@@ -35,6 +40,16 @@ def _project(tmp_path: Path, harness: Harness = Harness.none) -> Path:
         scaffold_version="0.0.0-test",
     )
     return root
+
+
+def _skill_files(root: str) -> tuple[str, ...]:
+    """The exact file list ``_install_skills`` writes under ``root``, in order.
+
+    Mirrors ``connect_module._install_skills`` rather than hardcoding the
+    eight names, so this stays correct if a skill is added or removed. One
+    ``SKILL.md`` per skill and nothing else -- no harness gets a sidecar file.
+    """
+    return tuple(f"{root}/{name}/SKILL.md" for name in list_skills())
 
 
 # --- claude-code ----------------------------------------------------------------
@@ -70,7 +85,9 @@ def test_claude_code_second_run_is_a_no_op(tmp_path: Path) -> None:
     result = connect_module.connect(root, Harness.claude_code, strict=False)
 
     assert result.written == ()
-    assert set(result.skipped) == {"CLAUDE.md", ".claude/settings.json"}
+    assert set(result.skipped) == {"CLAUDE.md", ".claude/settings.json"} | set(
+        _skill_files(connect_module._SKILLS_ROOT_CLAUDE)
+    )
     assert result.warned == ()
 
 
@@ -120,7 +137,9 @@ def test_codex_writes_hooks_json_with_no_bridge(tmp_path: Path) -> None:
 
     result = connect_module.connect(root, Harness.codex, strict=False)
 
-    assert result.written == (".codex/hooks.json", "smairt.yaml")
+    assert result.written == (
+        (".codex/hooks.json", *_skill_files(connect_module._SKILLS_ROOT_SHARED), "smairt.yaml")
+    )
     payload = json.loads((root / ".codex" / "hooks.json").read_text())
     assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt hook report"
 
@@ -141,7 +160,10 @@ def test_codex_second_run_is_a_no_op(tmp_path: Path) -> None:
     result = connect_module.connect(root, Harness.codex, strict=False)
 
     assert result.written == ()
-    assert result.skipped == (".codex/hooks.json",)
+    assert result.skipped == (
+        ".codex/hooks.json",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+    )
 
 
 def test_codex_researcher_edited_hook_file_is_warned_about_and_untouched(tmp_path: Path) -> None:
@@ -164,7 +186,12 @@ def test_cursor_writes_hooks_json_and_rule(tmp_path: Path) -> None:
 
     result = connect_module.connect(root, Harness.cursor, strict=False)
 
-    assert result.written == (".cursor/hooks.json", ".cursor/rules/smairt.mdc", "smairt.yaml")
+    assert result.written == (
+        ".cursor/hooks.json",
+        ".cursor/rules/smairt.mdc",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+        "smairt.yaml",
+    )
     payload = json.loads((root / ".cursor" / "hooks.json").read_text())
     assert payload["version"] == 1
     assert payload["hooks"]["stop"][0]["command"] == "smairt hook report"
@@ -198,7 +225,11 @@ def test_opencode_writes_a_plugin_file(tmp_path: Path) -> None:
 
     result = connect_module.connect(root, Harness.opencode, strict=False)
 
-    assert result.written == (".opencode/plugins/smairt-check.ts", "smairt.yaml")
+    assert result.written == (
+        ".opencode/plugins/smairt-check.ts",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+        "smairt.yaml",
+    )
     content = (root / ".opencode" / "plugins" / "smairt-check.ts").read_text()
     assert "smairt hook report" in content
     assert '"tool.execute.before":' not in content  # the actual hook, not the doc comment
@@ -221,7 +252,10 @@ def test_opencode_second_run_is_a_no_op(tmp_path: Path) -> None:
     result = connect_module.connect(root, Harness.opencode, strict=False)
 
     assert result.written == ()
-    assert result.skipped == (".opencode/plugins/smairt-check.ts",)
+    assert result.skipped == (
+        ".opencode/plugins/smairt-check.ts",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+    )
 
 
 # --- pi -------------------------------------------------------------------------
@@ -232,7 +266,11 @@ def test_pi_writes_an_extension_file(tmp_path: Path) -> None:
 
     result = connect_module.connect(root, Harness.pi, strict=False)
 
-    assert result.written == (".pi/extensions/smairt-check.ts", "smairt.yaml")
+    assert result.written == (
+        ".pi/extensions/smairt-check.ts",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+        "smairt.yaml",
+    )
     content = (root / ".pi" / "extensions" / "smairt-check.ts").read_text()
     assert "export default function (pi: ExtensionAPI)" in content
     assert 'pi.on("agent_end"' in content
@@ -258,7 +296,10 @@ def test_pi_second_run_is_a_no_op(tmp_path: Path) -> None:
     result = connect_module.connect(root, Harness.pi, strict=False)
 
     assert result.written == ()
-    assert result.skipped == (".pi/extensions/smairt-check.ts",)
+    assert result.skipped == (
+        ".pi/extensions/smairt-check.ts",
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+    )
 
 
 def test_pi_researcher_edited_extension_is_warned_about_and_untouched(tmp_path: Path) -> None:
@@ -282,7 +323,11 @@ def test_gemini_writes_settings_with_context_filename_and_session_end_hook(tmp_p
 
     result = connect_module.connect(root, Harness.gemini_cli, strict=False)
 
-    assert result.written == (".gemini/settings.json", "smairt.yaml")
+    assert result.written == (
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+        ".gemini/settings.json",
+        "smairt.yaml",
+    )
     payload = json.loads((root / ".gemini" / "settings.json").read_text())
     assert "AGENTS.md" in payload["context"]["fileName"]
     assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt hook report"
@@ -305,7 +350,10 @@ def test_gemini_second_run_is_a_no_op(tmp_path: Path) -> None:
     result = connect_module.connect(root, Harness.gemini_cli, strict=False)
 
     assert result.written == ()
-    assert result.skipped == (".gemini/settings.json",)
+    assert result.skipped == (
+        *_skill_files(connect_module._SKILLS_ROOT_SHARED),
+        ".gemini/settings.json",
+    )
 
 
 def test_gemini_merges_into_an_existing_settings_file_without_clobbering_it(tmp_path: Path) -> None:
@@ -351,6 +399,157 @@ def test_gemini_invalid_json_is_warned_about_and_untouched(tmp_path: Path) -> No
 
     assert (gemini_dir / "settings.json").read_text() == "{not valid json"
     assert any(".gemini/settings.json" in warning for warning in result.warned)
+
+
+# --- skills -----------------------------------------------------------------------
+
+
+def _frontmatter_fields(skill_md_text: str) -> dict[str, object]:
+    """Parse a skill file's ``---``-delimited frontmatter as YAML, for assertions."""
+    _, _, rest = skill_md_text.partition("---\n")
+    frontmatter_text, _, _ = rest.partition("\n---\n")
+    parsed = yaml.safe_load(frontmatter_text)
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def test_claude_code_installs_every_shipped_skill_at_dot_claude_skills(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    result = connect_module.connect(root, Harness.claude_code, strict=False)
+
+    for name in list_skills():
+        relative = f".claude/skills/{name}/SKILL.md"
+        assert relative in result.written
+        text = (root / relative).read_text()
+        assert text.startswith("---\n")  # frontmatter must open on line 1
+        fields = _frontmatter_fields(text)
+        assert fields["name"] == name
+
+
+@pytest.mark.parametrize(
+    "harness", [Harness.codex, Harness.cursor, Harness.opencode, Harness.gemini_cli, Harness.pi]
+)
+def test_the_five_shared_harnesses_install_every_shipped_skill_at_dot_agents_skills(
+    tmp_path: Path, harness: Harness
+) -> None:
+    root = _project(tmp_path / harness.value)
+
+    result = connect_module.connect(root, harness, strict=False)
+
+    for name in list_skills():
+        relative = f".agents/skills/{name}/SKILL.md"
+        assert relative in result.written
+        text = (root / relative).read_text()
+        assert text.startswith("---\n")
+        assert _frontmatter_fields(text)["name"] == name
+
+
+def test_installed_skill_carries_the_provenance_notice_after_the_frontmatter(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.claude_code, strict=False)
+
+    text = (root / ".claude" / "skills" / "smairt-orient" / "SKILL.md").read_text()
+    frontmatter, _, rest = text.partition("---\n")
+    _, _, body = rest.partition("---\n")
+    assert "Copied by `smairt connect claude-code`" in body
+    # The notice sits in the body, after the frontmatter closes -- never before
+    # the opening delimiter, which would break Cursor's and OpenCode's parsers.
+    assert body.index("Copied by") < body.index("# SMAIRT Orient")
+
+
+def test_shared_skill_provenance_notice_does_not_name_a_specific_harness(tmp_path: Path) -> None:
+    """Naming a harness in the shared copy would break the free cross-harness idempotency."""
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.codex, strict=False)
+
+    text = (root / ".agents" / "skills" / "smairt-orient" / "SKILL.md").read_text()
+    assert "Copied by `smairt connect <harness>`" in text
+    for other in ("codex", "cursor", "opencode", "gemini-cli", "pi"):
+        assert f"connect {other}" not in text
+
+
+def test_only_adversarial_review_gets_disable_model_invocation(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.claude_code, strict=False)
+
+    restricted = (
+        root / ".claude" / "skills" / "smairt-adversarial-review" / "SKILL.md"
+    ).read_text()
+    assert _frontmatter_fields(restricted)["disable-model-invocation"] is True
+
+    for name in list_skills():
+        if name == "smairt-adversarial-review":
+            continue
+        text = (root / ".claude" / "skills" / name / "SKILL.md").read_text()
+        assert "disable-model-invocation" not in _frontmatter_fields(text)
+
+
+def test_no_harness_gets_a_codex_openai_yaml_policy_sidecar(tmp_path: Path) -> None:
+    """Codex's ``agents/openai.yaml`` policy file is deliberately never written.
+
+    It is the documented Codex counterpart to ``disable-model-invocation``, but
+    measured against ``codex-cli 0.146.0`` it removes the skill from the injected
+    list entirely rather than only suppressing automatic selection. Since
+    ``smairt-adversarial-review`` has no use except explicit researcher
+    invocation, writing it would delete the mechanism rather than enforce it --
+    see the "Judgment calls" note in ``connect.py``'s module docstring.
+    """
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.codex, strict=False)
+    connect_module.connect(root, Harness.claude_code, strict=False)
+
+    for skills_root in (".agents/skills", ".claude/skills"):
+        for name in list_skills():
+            assert not (root / skills_root / name / "agents").exists()
+
+
+def test_connecting_a_second_shared_harness_finds_skills_already_installed(tmp_path: Path) -> None:
+    """The shared ``.agents/skills/`` target is free: the second harness connected
+    to a project sees byte-identical skill files and reports them ``skipped``,
+    never rewriting or warning about them.
+    """
+    root = _project(tmp_path)
+    connect_module.connect(root, Harness.codex, strict=False)
+
+    result = connect_module.connect(root, Harness.cursor, strict=False)
+
+    for relative in _skill_files(connect_module._SKILLS_ROOT_SHARED):
+        assert relative in result.skipped
+        assert relative not in result.written
+    assert result.warned == ()
+
+
+def test_claude_code_never_overwrites_a_researcher_edited_skill(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    skill_dir = root / ".claude" / "skills" / "smairt-orient"
+    skill_dir.mkdir(parents=True)
+    custom = "---\nname: smairt-orient\ndescription: my own version\n---\n\nMy own text.\n"
+    (skill_dir / "SKILL.md").write_text(custom, encoding="utf-8")
+
+    result = connect_module.connect(root, Harness.claude_code, strict=False)
+
+    assert (skill_dir / "SKILL.md").read_text() == custom
+    assert any(".claude/skills/smairt-orient/SKILL.md" in warning for warning in result.warned)
+
+
+def test_shared_researcher_edited_skill_is_warned_about_and_left_untouched(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    skill_dir = root / ".agents" / "skills" / "smairt-orient"
+    skill_dir.mkdir(parents=True)
+    custom = "---\nname: smairt-orient\ndescription: my own version\n---\n\nMy own text.\n"
+    (skill_dir / "SKILL.md").write_text(custom, encoding="utf-8")
+
+    result = connect_module.connect(root, Harness.codex, strict=False)
+
+    assert (skill_dir / "SKILL.md").read_text() == custom
+    assert any(".agents/skills/smairt-orient/SKILL.md" in warning for warning in result.warned)
 
 
 # --- project scoping -----------------------------------------------------------
