@@ -7,8 +7,9 @@ writes only the contract files (:func:`adopt_project`); it never moves, renames,
 or edits anything that already exists in the adopted directory. Reference units
 (the proposal-gated part of adoption) are :func:`smairt.units.create_stage` /
 :func:`smairt.units.create_question` called with ``ref_paths`` — see
-``skills/smairt-adopt/SKILL.md`` for the walking procedure an assistant follows
-after this command runs.
+the ``smairt-adopt`` skill (:mod:`smairt.skills`; source at
+``src/smairt/assets/skills/smairt-adopt/SKILL.md``) for the walking procedure
+an assistant follows after this command runs.
 
 Public entry point: :func:`adopt_project`, returning an :class:`AdoptResult`.
 

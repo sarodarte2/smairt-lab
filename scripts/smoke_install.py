@@ -44,6 +44,26 @@ def main() -> None:
         raise SystemExit(version.stderr or version.stdout)
     if not version.stdout.strip().startswith("smairt "):
         raise SystemExit(f"Unexpected --version output: {version.stdout!r}")
+    # Skills are shipped as package data (src/smairt/assets/skills/), not
+    # loose files next to the repo checkout, so the only real test that they
+    # made it into the artifact is asking the *installed* package for them —
+    # this venv has never seen the source tree, only what pip just installed.
+    skills_check = run(
+        [
+            str(python),
+            "-c",
+            "from smairt.skills import list_skills, read_skill\n"
+            "names = list_skills()\n"
+            "assert len(names) == 8, f'expected 8 skills, found {names}'\n"
+            "for name in names:\n"
+            "    assert read_skill(name).startswith('---'), name\n"
+            "print(len(names))\n",
+        ]
+    )
+    if skills_check.returncode:
+        raise SystemExit(skills_check.stderr or skills_check.stdout)
+    if skills_check.stdout.strip() != "8":
+        raise SystemExit(f"Expected 8 installed skills, saw: {skills_check.stdout!r}")
     for command in STUB_COMMANDS:
         stub = run([str(smairt), command])
         if stub.returncode == 0:
