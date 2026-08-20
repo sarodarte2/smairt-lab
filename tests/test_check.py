@@ -1,6 +1,6 @@
-"""Tests for ``smairt check`` (src/smairt/check.py): the eleven state-contract rules.
+"""Tests for ``smairt check`` (src/smairt/check.py): the thirteen state-contract rules.
 
-Each rule (SMAIRT001-010, plus the SMAIRT1xx advisory suggestions) gets its
+Each rule (SMAIRT001-013, plus the SMAIRT1xx advisory suggestions) gets its
 own section below, marked with a ``# ---`` header matching the rule's name in
 check.py. ``_project`` builds a throwaway project per test; ``_set_fields``
 edits one unit's frontmatter to provoke (or fix) a specific finding.
@@ -9,18 +9,25 @@ edits one unit's frontmatter to provoke (or fix) a specific finding.
 from __future__ import annotations
 
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
+import yaml
+
 from smairt import frontmatter
 from smairt.check import (
+    ERROR,
     RULE_ANALYSIS_PLAN,
     RULE_CLOSED_QUESTION,
     RULE_EVIDENCE_POINTERS,
     RULE_FRONTMATTER,
     RULE_HYPOTHESIS_NONEMPTY,
     RULE_LOG_IMMUTABILITY,
+    RULE_MISSING_README,
+    RULE_PROJECT_CONFIG,
     RULE_PROMPTED_BY,
+    RULE_PROMPTED_BY_CYCLE,
     RULE_RECEIPT_COMPLETENESS,
     RULE_STATUS_DRIFT,
     RULE_STRUCTURE_DRIFT,
@@ -29,6 +36,7 @@ from smairt.check import (
     SUGGEST_GROUPING,
     SUGGEST_HPC,
     SUGGEST_PAPER_OVERLAY,
+    WARNING,
     render_human,
     run_checks,
     to_json,
@@ -219,8 +227,15 @@ def test_rule2_reference_unit_paths_resolve_against_project_root(tmp_path: Path)
 
 
 def test_rule2_reference_unit_broken_path_is_flagged(tmp_path: Path) -> None:
+    # DG-5 now validates --ref (and so ref_paths) at creation, so a broken
+    # paths: value can only reach rule 2 by hand-editing frontmatter after
+    # the fact -- exactly what this test simulates, via _set_fields.
     root = _project(tmp_path)
-    create_question(root, "Old DE run", ref_paths=["does_not_exist_anywhere"], created=date.today())
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    question = create_question(
+        root, "Old DE run", ref_paths=["data/old_analysis"], created=date.today()
+    )
+    _set_fields(question / "README.md", paths=["does_not_exist_anywhere"])
 
     report = run_checks(root)
 
@@ -234,11 +249,20 @@ def test_rule2_absolute_path_in_paths_does_not_silently_resolve(tmp_path: Path) 
     pathlib discards the left side of a join when the right side is absolute. An
     absolute `--ref`/`paths:` value that happens to exist somewhere on the machine
     used to pass `smairt check` clean, defeating the documented "paths: resolves
-    from the project root" contract with no warning at all."""
+    from the project root" contract with no warning at all.
+
+    DG-5 now rejects an absolute --ref at creation (units.create_question), so
+    this simulates the same broken state via a post-creation hand-edit --
+    frontmatter check must still catch, not just creation-time validation.
+    """
     root = _project(tmp_path)
     outside = tmp_path / "outside_the_project.txt"
     outside.write_text("not part of the project\n", encoding="utf-8")
-    create_question(root, "Escaping ref", ref_paths=[str(outside)], created=date.today())
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    question = create_question(
+        root, "Escaping ref", ref_paths=["data/old_analysis"], created=date.today()
+    )
+    _set_fields(question / "README.md", paths=[str(outside)])
 
     report = run_checks(root)
 
@@ -544,7 +568,9 @@ def test_rule8_prompted_by_resolving_to_a_real_unit_is_not_flagged(tmp_path: Pat
 
 def test_rule8_prompted_by_pointing_at_a_folder_with_no_readme_is_flagged(tmp_path: Path) -> None:
     # A bare folder under experiments/ (no README.md of its own) isn't "a real
-    # unit" -- the same standard rule SMAIRT002 already holds paths: to.
+    # unit" -- the same standard rule SMAIRT002 already holds paths: to. That
+    # same bare folder is also exactly what rule SMAIRT012 (DG-2) exists to
+    # flag, so this fixture legitimately trips both rules at once.
     root = _project(tmp_path)
     (root / "experiments" / "2026-01-01_not-a-real-unit").mkdir(parents=True)
     question = create_question(
@@ -557,7 +583,7 @@ def test_rule8_prompted_by_pointing_at_a_folder_with_no_readme_is_flagged(tmp_pa
 
     report = run_checks(root)
 
-    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY}
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY, RULE_MISSING_README}
 
 
 def test_rule8_unset_prompted_by_is_never_flagged(tmp_path: Path) -> None:
@@ -833,6 +859,297 @@ def test_freshly_created_dataset_leaves_smairt_check_completely_clean(tmp_path: 
     assert not any(s.id == SUGGEST_DATASET_LOCATIONS for s in report.suggestions)
 
 
+# --- rule SMAIRT011: project identity (smairt.yaml) -----------------------------
+
+
+def test_rule11_missing_name_field_is_flagged_by_name(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    del config["name"]
+    (root / "smairt.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROJECT_CONFIG}
+    message = report.findings[0].message
+    assert "name:" in message
+    assert "A correct smairt.yaml looks like this" in message
+
+
+def test_rule11_empty_smairt_yaml_reports_every_missing_field_in_one_finding(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    (root / "smairt.yaml").write_text("", encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert len(report.findings) == 1
+    finding = report.findings[0]
+    assert finding.id == RULE_PROJECT_CONFIG
+    assert finding.path == "smairt.yaml"
+    assert "empty" in finding.message
+    assert "A correct smairt.yaml looks like this" in finding.message
+
+
+def test_rule11_yaml_list_instead_of_mapping_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "smairt.yaml").write_text("- a\n- b\n", encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROJECT_CONFIG}
+    assert "mapping" in report.findings[0].message
+
+
+def test_rule11_blank_researcher_field_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    config["researcher"] = "   "
+    (root / "smairt.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROJECT_CONFIG}
+    assert "researcher:" in report.findings[0].message
+
+
+def test_rule11_missing_multiple_fields_names_all_of_them_in_one_finding(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    del config["name"]
+    del config["description"]
+    (root / "smairt.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROJECT_CONFIG}
+    message = report.findings[0].message
+    assert "name:" in message
+    assert "description:" in message
+    # One finding, one copy of the example -- not one per field.
+    assert message.count("A correct smairt.yaml looks like this") == 1
+
+
+def test_rule11_a_normal_freshly_created_project_is_never_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_PROJECT_CONFIG for f in report.findings)
+
+
+# --- rule SMAIRT012: README-less unit folder (DG-2) -----------------------------
+
+
+def test_rule12_folder_under_experiments_with_no_readme_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    folder = root / "experiments" / "2026-08-20_hand-made"
+    folder.mkdir(parents=True)
+    (folder / "notes.txt").write_text("x", encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_MISSING_README}
+    finding = report.findings[0]
+    assert finding.severity == WARNING
+    assert finding.path == "experiments/2026-08-20_hand-made"
+    assert "smairt unit new" in finding.message
+
+
+def test_rule12_a_real_unit_is_never_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    create_stage(root, "Alignment", created=date.today())
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_MISSING_README for f in report.findings)
+
+
+def test_rule12_a_loose_file_directly_under_experiments_is_not_double_flagged(
+    tmp_path: Path,
+) -> None:
+    # A loose FILE (not a folder) is SMAIRT006's job, not SMAIRT012's -- the
+    # two rules must not both fire on the same entry.
+    root = _project(tmp_path)
+    (root / "experiments" / "stray.txt").write_text("x", encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_STRUCTURE_DRIFT}
+
+
+def test_rule12_a_dot_prefixed_folder_is_not_flagged(tmp_path: Path) -> None:
+    # A hidden folder (an editor/tool artifact like .ipynb_checkpoints/) is
+    # not a researcher's untracked work -- flagging it would be noise, the
+    # same reasoning SMAIRT006's top-level scan already applies.
+    root = _project(tmp_path)
+    hidden = root / "experiments" / ".ipynb_checkpoints"
+    hidden.mkdir()
+    (hidden / "scratch.ipynb").write_text("{}", encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_MISSING_README for f in report.findings)
+
+
+# --- rule SMAIRT006 sharpening: nested SMAIRT project (DG-3) --------------------
+
+
+def test_rule6_nested_smairt_project_gets_a_specific_message(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    nested = root / "inner_project"
+    create_project(
+        nested,
+        name="Inner",
+        researcher="Ada Lovelace",
+        description="Nested inside the outer project.",
+        harness=Harness.none,
+        created=date.today(),
+        scaffold_version="0.0.0-test",
+    )
+
+    report = run_checks(root)
+
+    findings = [
+        f for f in report.findings if f.id == RULE_STRUCTURE_DRIFT and f.path == "inner_project"
+    ]
+    assert len(findings) == 1
+    assert "is itself a SMAIRT project" in findings[0].message
+    assert "smairt.yaml" in findings[0].message
+
+
+def test_rule6_unknown_folder_without_smairt_yaml_keeps_the_generic_message(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    (root / "just_a_folder").mkdir()
+
+    report = run_checks(root)
+
+    findings = [f for f in report.findings if f.id == RULE_STRUCTURE_DRIFT]
+    assert len(findings) == 1
+    assert "is itself a SMAIRT project" not in findings[0].message
+    assert "not part of the known scaffold" in findings[0].message
+
+
+# --- rule SMAIRT013: prompted_by cycles (DG-4) -----------------------------------
+
+
+def _linked_question(root: Path, title: str, *, prompted_by: str | None = None) -> Path:
+    return create_question(
+        root,
+        title,
+        hypothesis=f"{title} holds.",
+        prompted_by=prompted_by,
+        created=date.today(),
+    )
+
+
+def test_rule13_two_unit_cycle_is_flagged_naming_both_units(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    q1 = create_question(root, "Q1", hypothesis="H1.", created=date(2026, 1, 1))
+    q2 = create_question(
+        root, "Q2", hypothesis="H2.", created=date(2026, 1, 2), prompted_by=q1.name
+    )
+    # Hand-edit Q1 to close the loop: Q1 <- Q2 <- Q1.
+    _set_fields(q1 / "README.md", prompted_by=q2.name)
+
+    report = run_checks(root)
+
+    cycle_findings = [f for f in report.findings if f.id == RULE_PROMPTED_BY_CYCLE]
+    assert len(cycle_findings) == 1
+    message = cycle_findings[0].message
+    assert q1.name in message
+    assert q2.name in message
+    assert cycle_findings[0].severity == ERROR
+
+
+def test_rule13_five_unit_cycle_is_detected_and_matches_the_friction_walk_shape(
+    tmp_path: Path,
+) -> None:
+    # Reproduces DG-4's exact setup: a 5-level --from chain closed into a
+    # loop by hand-editing the first unit's frontmatter (Q1->Q2->Q3->Q4->Q5->Q1).
+    root = _project(tmp_path)
+    q1 = _linked_question(root, "Q1")
+    q2 = _linked_question(root, "Q2", prompted_by=q1.name)
+    q3 = _linked_question(root, "Q3", prompted_by=q2.name)
+    q4 = _linked_question(root, "Q4", prompted_by=q3.name)
+    q5 = _linked_question(root, "Q5", prompted_by=q4.name)
+    _set_fields(q1 / "README.md", prompted_by=q5.name)
+
+    report = run_checks(root)
+
+    cycle_findings = [f for f in report.findings if f.id == RULE_PROMPTED_BY_CYCLE]
+    assert len(cycle_findings) == 1
+    message = cycle_findings[0].message
+    for unit in (q1, q2, q3, q4, q5):
+        assert unit.name in message
+
+
+def test_rule13_a_dangling_prompted_by_is_not_treated_as_a_cycle(tmp_path: Path) -> None:
+    # A link that doesn't resolve is SMAIRT008's finding, not a cycle
+    # candidate -- the two rules must partition the field's problems, not
+    # double-report the same root cause.
+    root = _project(tmp_path)
+    question = create_question(root, "Q1", hypothesis="H1.", created=date.today())
+    _set_fields(question / "README.md", prompted_by="does-not-exist")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY}
+
+
+def test_rule13_a_self_referencing_prompted_by_is_a_degenerate_cycle(tmp_path: Path) -> None:
+    # A unit naming ITSELF as prompted_by "resolves" by SMAIRT008's own rule
+    # (its own README.md genuinely exists at that path), so SMAIRT008 alone
+    # never catches this -- it is exactly as impossible in real work as any
+    # longer loop ("a question prompted by itself"), just a length-1 cycle,
+    # so rule SMAIRT013 must catch it even though SMAIRT008 doesn't.
+    root = _project(tmp_path)
+    question = create_question(root, "Q1", hypothesis="H1.", created=date.today())
+    _set_fields(question / "README.md", prompted_by=question.name)
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY_CYCLE}
+    assert question.name in report.findings[0].message
+
+
+def test_rule13_a_normal_lineage_chain_is_never_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    q1 = _linked_question(root, "Q1")
+    _linked_question(root, "Q2", prompted_by=q1.name)
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_PROMPTED_BY_CYCLE for f in report.findings)
+
+
+def test_rule13_cyclic_project_does_not_hang_check_status_or_index(tmp_path: Path) -> None:
+    """Regression for DG-4's own verification: the friction walk confirmed a
+    hand-made prompted_by: cycle never hangs or crashes `check`/`status`/
+    `index`, under a hard 15-second subprocess timeout. This rule ADDS
+    detection on top of that; it must not regress the "never hangs" part."""
+    root = _project(tmp_path)
+    q1 = _linked_question(root, "Q1")
+    q2 = _linked_question(root, "Q2", prompted_by=q1.name)
+    q3 = _linked_question(root, "Q3", prompted_by=q2.name)
+    _set_fields(q1 / "README.md", prompted_by=q3.name)
+
+    for command in ("check", "status", "index"):
+        result = subprocess.run(
+            [sys.executable, "-c", "from smairt.cli import main; main()", command],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode in (0, 1), (command, result.stdout, result.stderr)
+
+
 # --- output rendering --------------------------------------------------------------
 
 
@@ -856,3 +1173,30 @@ def test_render_human_includes_finding_id_and_path(tmp_path: Path) -> None:
 
     assert RULE_STRUCTURE_DRIFT in text
     assert "experiments/stray.txt" in text
+
+
+def test_rule2_relative_path_climbing_out_of_the_project_does_not_silently_resolve(
+    tmp_path: Path,
+) -> None:
+    """Regression: a `../`-escaping RELATIVE pointer is the same mistake as an absolute one.
+
+    The absolute-path guard above only catches targets that look like escapes.
+    A relative target with enough `../` to climb out of the project is not
+    absolute, so it slipped past — and if it landed on a real file it passed
+    `smairt check` completely clean while pointing at something the project
+    does not contain. Both spellings have to be caught.
+    """
+    root = _project(tmp_path)
+    outside = tmp_path / "outside_the_project.txt"
+    outside.write_text("not part of the project\n", encoding="utf-8")
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    question = create_question(
+        root, "Climbing ref", ref_paths=["data/old_analysis"], created=date.today()
+    )
+    climbing = "../" * len(root.resolve().parts) + str(outside.resolve()).lstrip("/")
+    _set_fields(question / "README.md", paths=[climbing])
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_EVIDENCE_POINTERS}
+    assert climbing in report.findings[0].message

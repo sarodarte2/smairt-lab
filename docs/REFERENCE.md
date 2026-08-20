@@ -51,6 +51,14 @@ non-interactive `smairt new` needs only
 `--name`/`--researcher`/`--description`/`--harness`. `--hpc` and `--paper`
 are independent of each other and of everything else.
 
+Running `smairt new` inside an already-existing SMAIRT project (any
+ancestor directory holding its own `smairt.yaml`) still creates the new
+project, but prints a warning naming the nesting and which project's
+`smairt.yaml` wins for commands run inside the new one — the same voice as
+the Git nesting message below. The outer project's own `smairt check` also
+flags the nested folder specifically (rule `SMAIRT006`), rather than the
+generic "unrecognized folder" message an unrelated folder gets.
+
 ### `smairt adopt`
 
 Lays the same contract files (`smairt.yaml`, `STATUS.md`, `AGENTS.md`,
@@ -110,7 +118,7 @@ choices. If `smairt.yaml`'s `settings.strict_hooks` is `true`, the blocking
 | `--tool-version TEXT` | Outside tool version (with `--receipt`). |
 | `--command TEXT` | Exact command that was run (with `--receipt`). |
 | `--repo TEXT` | Tool repo URL and commit, if any (with `--receipt`). |
-| `--ref TEXT` | Existing path this unit references, relative to the project root (repeatable). Creates a thin, README-only reference unit pointing at code that already exists elsewhere in the tree — how `smairt adopt` gives pre-existing work a unit without moving it. |
+| `--ref TEXT` | Existing path this unit references, relative to the project root (repeatable). Creates a thin, README-only reference unit pointing at code that already exists elsewhere in the tree — how `smairt adopt` gives pre-existing work a unit without moving it. Validated to exist at creation. |
 
 A **stage** folder is `NN_slug/` (e.g. `01_align-reads/`), numbered
 automatically and only ever upward; status is one of `active`, `frozen`, or
@@ -225,7 +233,7 @@ local hooks.
 
 ## `smairt check`: rules and output
 
-`smairt check` runs ten finding rules and five advisory suggestion rules
+`smairt check` runs thirteen finding rules and five advisory suggestion rules
 against a project's units, frontmatter, and state. Each rule carries one
 stable id that is never renumbered once shipped; the rule, not each way of
 violating it, is the unit of identity.
@@ -244,6 +252,16 @@ violating it, is the unit of identity.
 | `SMAIRT008` | error | A question's `prompted_by:` is set but does not resolve to a real unit (a folder with its own `README.md`) under `experiments/`. |
 | `SMAIRT009` | error | A question unit's `hypothesis:` is present but empty (reference units are exempt). |
 | `SMAIRT010` | error | A CLOSED question unit's `## Analysis plan` body section is missing or empty (reference units are exempt). |
+| `SMAIRT011` | error | The project's own `smairt.yaml` parses but is empty, isn't a mapping, or is missing/blank on a required identity field (`name:`/`researcher:`/`description:`). |
+| `SMAIRT012` | warning | A folder directly under `experiments/` has no `README.md`, so it is invisible to `check`/`status`/`index`. |
+| `SMAIRT013` | error | A question's `prompted_by:` chain loops back on itself (a cycle, only reachable by hand-editing frontmatter). |
+
+An unparseable `smairt.yaml` (a genuine YAML syntax error, not just a missing
+field) never reaches rule `SMAIRT011` at all — every command, `check`
+included, fails fast the moment it resolves the project root, naming the
+file, the line where YAML reports the problem, and printing a correct
+`smairt.yaml` to repair it by eye. See *Judgment calls* in `check.py`'s
+module docstring for the full policy.
 
 ### Advisory suggestions (a separate channel; never affect the exit code)
 

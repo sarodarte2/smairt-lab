@@ -45,6 +45,13 @@ Findings (severity error/warning; each instance affects the process exit code)::
                (reference units, case 3, are exempt).                   [error]
     SMAIRT010  A CLOSED question unit's '## Analysis plan' body section is
                missing or empty (reference units, case 3, are exempt).  [error]
+    SMAIRT011  The project's own smairt.yaml parses but is missing, or has
+               emptied out, a required identity field (name:/researcher:/
+               description:).                                            [error]
+    SMAIRT012  A folder directly under experiments/ has no README.md, so it
+               is invisible to check/status/index.                     [warning]
+    SMAIRT013  A question's prompted_by: chain loops back on itself (a
+               cycle, only reachable by hand-editing frontmatter).        [error]
 
 Advisory suggestions (a separate channel; never affect the exit code)::
 
@@ -98,6 +105,16 @@ Judgment calls a reviewer should know about
   top-level folders, on top of the fixed scaffold set — an adopted project's
   pre-existing directories don't warn; anything new appearing after adoption
   still does.
+* The one ``smairt.yaml`` degrade policy (DG-1) splits on reads versus
+  writes, not on call sites. Unparseable YAML fails fast for every command at
+  project-root resolution; a file that parses but is invalid is rule
+  SMAIRT011. Below that, a *read* falls back silently to a documented safe
+  default (:func:`smairt.connect.read_strict_hooks` -> non-strict,
+  :func:`_adoption_known_folders` -> no known folders), because nothing the
+  researcher asked for has gone missing. A *write* that cannot happen always
+  warns (:func:`smairt.connect._record_harness`): the researcher asked for it,
+  and silence would let a command report success while the change never
+  landed.
 * Rule SMAIRT008 (``prompted_by:`` resolves) treats a target as resolved only
   when ``experiments/<target>/README.md`` exists — the same "must actually be
   a unit, not just a folder" standard rule SMAIRT002 already holds reference
@@ -124,6 +141,92 @@ Judgment calls a reviewer should know about
   implementation, so extending its one caller to two rather than writing a
   second parser was the whole point of the ticket's "reuse read_status's
   approach" instruction.
+* **DG-1's degrade policy, decided once and applied everywhere:** a
+  ``smairt.yaml`` that fails to PARSE (a genuine YAML syntax error) is caught
+  as early as possible — :func:`smairt.project.find_project_root`, which
+  every command already calls to resolve "which project am I in", raises
+  :class:`smairt.project.ProjectConfigError` and every command turns that
+  into a `smairt <command>: ...` failure before doing anything else. A
+  ``smairt.yaml`` that PARSES but is empty, isn't a mapping, or is missing a
+  required identity field is instead rule SMAIRT011 below — it can only be
+  reached once the project root is already known-good, so it is a `check`
+  finding like any other, not a second fail-fast path. Every OTHER reader of
+  ``smairt.yaml`` in this codebase (this rule's own
+  :func:`_adoption_known_folders`, and :mod:`smairt.connect`'s
+  ``read_strict_hooks``/``_record_harness``) goes through the single shared
+  :func:`smairt.project.read_project_config` and, on failure, silently falls
+  back to its own safe default (no known folders / ``strict_hooks: False`` /
+  the ``harnesses:`` list left untouched) — it does NOT print its own
+  warning. This replaces the previous per-call-site inconsistency (
+  ``_adoption_known_folders`` and ``read_strict_hooks`` degraded silently
+  while ``_record_harness`` warned on the identical failure) with one rule:
+  a broken ``smairt.yaml`` is always surfaced through exactly one of the two
+  systematic channels above (fail-fast or SMAIRT011), never through an ad
+  hoc per-function message that would just repeat the same news a third or
+  fourth time. In the realistic case — a researcher breaks the file's YAML
+  *syntax* by hand — fail-fast already stops every command, including
+  ``smairt connect``, before ``read_strict_hooks`` or ``_record_harness``
+  ever run, which is what actually fixes the walk's worst finding here (a
+  broken file silently costing a researcher their ``strict_hooks: true``
+  gate). The remaining "valid YAML, wrong shape" case is only reachable by a
+  much stranger hand-edit (replacing the whole mapping with a bare list, for
+  instance); it still gets caught, just the next time `smairt check` runs
+  rather than instantly.
+* **DG-1's required fields.** Rule SMAIRT011 requires exactly ``name:``,
+  ``researcher:``, ``description:`` — the three fields
+  ``_prompt_missing_identity`` (cli.py) actually asks a researcher for, and
+  the only three a human being is likely to ever hand-edit. ``schema_version``/
+  ``scaffold_version``/``created``/``harnesses``/``settings`` are smairt's own
+  bookkeeping, already read defensively (``.get(...)`` with a fallback)
+  everywhere they're consumed, and are not something a researcher edits by
+  hand or would know how to "fix" if flagged — flagging them would turn this
+  rule from "your project doesn't say who/what this is" into unhelpful
+  pedantry about internal fields.
+* **DG-1's message, one finding per broken file.** Rule SMAIRT011 emits at
+  most ONE finding for a broken ``smairt.yaml`` (naming every missing/empty
+  field it found, not just the first), rather than one finding per field —
+  the hard requirement is that the message end by showing what a correct
+  file looks like (:func:`smairt.project.example_smairt_yaml`), and pasting
+  that same ~9-line block two or three times over for a file missing several
+  fields would bury the useful part in repetition instead of helping.
+* **DG-2 (rule SMAIRT012)** matches SMAIRT006's severity (warning, not
+  error/suggestion) because it is the same class of problem — the project
+  still "works", it just doesn't match the shape `smairt` can see — and the
+  message points at ``smairt unit new`` as the one supported fix, the same
+  as :mod:`smairt`'s ``AGENTS.md`` template already tells every researcher.
+  Deliberately does not attempt to guess whether the folder is stage-shaped
+  or question-shaped; that's a judgment call for the researcher, not this
+  rule.
+* **DG-3's SMAIRT006 sharpening**: when an unrecognized top-level folder
+  itself contains a ``smairt.yaml``, :func:`_check_structure_drift` names
+  that specifically ("is itself a SMAIRT project") instead of the generic
+  "not part of the known scaffold" text — this is the same situation
+  ``smairt new``'s own nesting warning (see :func:`smairt.project.
+  find_enclosing_project`, called from ``cli.py``'s ``new`` command) already
+  warns about at creation time; this is the backstop for finding it later
+  (adopted from elsewhere, created before this check existed, or the warning
+  was missed).
+* **DG-4 (rule SMAIRT013, prompted_by cycles)**: :func:`_check_prompted_by_cycle`
+  is a SEPARATE, from-scratch cycle walk over the same ``prompted_by:``
+  edges rule SMAIRT008 already validates resolve — it deliberately does not
+  reuse or touch :func:`smairt.index._ordered_for_index`'s own cycle guard,
+  which the friction walk already verified (under a hard 15-second timeout)
+  never hangs or crashes; this rule only ADDS a report of what that guard
+  was silently working around. Only edges that already resolve (per
+  :func:`_prompted_by_resolves`) participate — a dangling ``prompted_by:``
+  is SMAIRT008's finding, not a cycle candidate, so the two rules never fire
+  on the same root cause. Because each question has at most one
+  ``prompted_by:`` target, the graph has out-degree <= 1 everywhere, which
+  is what makes an O(n) three-color walk (unvisited/in-progress/done)
+  sufficient — no recursion depth concerns, no need for a general-graph
+  algorithm. A unit naming ITSELF as ``prompted_by:`` is treated as a
+  degenerate, length-1 cycle, not silently ignored: it "resolves" by
+  SMAIRT008's own rule (the unit's own README.md genuinely exists at that
+  path), so SMAIRT008 never catches it, even though "prompted by itself" is
+  exactly as impossible in real work as any longer loop. This differs from
+  :func:`smairt.index._ordered_for_index`, which also refuses to nest a
+  record under itself — but only to decide it shouldn't render as its own
+  parent, a rendering choice this rule has no reason to copy.
 """
 
 from __future__ import annotations
@@ -134,11 +237,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from smairt import frontmatter
+from smairt import project as project_module
 from smairt import units as units_module
-from smairt.project import is_git_work_tree
 from smairt.units import UnitKind
 
 ERROR = "error"
@@ -154,6 +255,9 @@ RULE_CLOSED_QUESTION = "SMAIRT007"
 RULE_PROMPTED_BY = "SMAIRT008"
 RULE_HYPOTHESIS_NONEMPTY = "SMAIRT009"
 RULE_ANALYSIS_PLAN = "SMAIRT010"
+RULE_PROJECT_CONFIG = "SMAIRT011"
+RULE_MISSING_README = "SMAIRT012"
+RULE_PROMPTED_BY_CYCLE = "SMAIRT013"
 
 SUGGEST_GIT_UNAVAILABLE = "SMAIRT101"
 SUGGEST_HPC = "SMAIRT102"
@@ -308,22 +412,24 @@ class _Unit:
 def run_checks(project_root: Path) -> CheckReport:
     """Run every WP2 rule against the project at ``project_root``. Read-only.
 
-    This is the one function that ties all eleven rules together: it loads
-    every unit once (:func:`_load_units`), then hands that same list to each
-    rule function in turn, collecting their findings/suggestions into one
-    report. To add a new rule, write a ``_check_*`` (findings) or
+    This is the one function that ties every rule together (thirteen finding
+    rules, SMAIRT001-013, plus five advisory suggestions, SMAIRT101-105): it
+    loads every unit once (:func:`_load_units`), then hands that same list to
+    each rule function in turn, collecting their findings/suggestions into
+    one report. To add a new rule, write a ``_check_*`` (findings) or
     ``_suggest_*`` (suggestions) function following the pattern below and
     call it from here — see docs/ARCHITECTURE.md.
     """
     units = _load_units(project_root)
 
     findings: list[Finding] = []
+    findings += _check_project_config(project_root)
     findings += _check_frontmatter_schema(units)
     findings += _check_evidence_pointers(project_root, units)
     findings += _check_receipt_completeness(units)
 
     suggestions: list[Suggestion] = []
-    if is_git_work_tree(project_root):
+    if project_module.is_git_work_tree(project_root):
         findings += _check_log_immutability(project_root, units)
     else:
         # No Git, no history to check for edits after the fact -- rule
@@ -339,8 +445,10 @@ def run_checks(project_root: Path) -> CheckReport:
 
     findings += _check_status_drift(project_root, units)
     findings += _check_structure_drift(project_root, units)
+    findings += _check_missing_readme_folders(project_root)
     findings += _check_closed_question_completeness(units)
     findings += _check_prompted_by(project_root, units)
+    findings += _check_prompted_by_cycle(project_root, units)
     findings += _check_hypothesis_nonempty(units)
     findings += _check_analysis_plan_on_close(units)
 
@@ -409,6 +517,64 @@ def _load_units(project_root: Path) -> list[_Unit]:
             )
         )
     return units
+
+
+# --- project identity (rule SMAIRT011) ----------------------------------------
+
+_PROJECT_CONFIG_REQUIRED_FIELDS = ("name", "researcher", "description")
+
+
+def _check_project_config(project_root: Path) -> list[Finding]:
+    """Rule SMAIRT011: the project's own smairt.yaml must be a usable identity file.
+
+    Every unit README gets SMAIRT001's coverage; before this rule existed,
+    the project's OWN identity file got none — a corrupt or gutted
+    ``smairt.yaml`` reported a perfectly healthy project (DG-1). A YAML
+    SYNTAX error never reaches this function at all in normal use: every
+    command already fails fast on that, at
+    :func:`smairt.project.find_project_root`, before `run_checks` is even
+    called — see the module docstring's "Judgment calls" section. What
+    reaches here is a file that parses fine but is empty, isn't a mapping,
+    or is missing one of the three identity fields a researcher actually
+    fills in (see :data:`_PROJECT_CONFIG_REQUIRED_FIELDS` and the module
+    docstring for why exactly those three).
+
+    Emits at most one finding for the whole file, naming every problem found
+    together, so the "here's what a correct file looks like" block that
+    closes the message (the hard requirement DG-1 sets) appears once, not
+    once per missing field.
+    """
+    config = project_module.read_project_config(project_root)
+    example = project_module.example_smairt_yaml()
+
+    if config.data is None:
+        assert config.problem is not None
+        return [
+            Finding(
+                RULE_PROJECT_CONFIG,
+                ERROR,
+                "smairt.yaml",
+                f"{config.problem}.\n\nA correct smairt.yaml looks like this:\n\n{example}",
+            )
+        ]
+
+    problems = [
+        f"no `{field}:` field (or it is present but empty)"
+        for field in _PROJECT_CONFIG_REQUIRED_FIELDS
+        if not str(config.data.get(field, "")).strip()
+    ]
+    if not problems:
+        return []
+    return [
+        Finding(
+            RULE_PROJECT_CONFIG,
+            ERROR,
+            "smairt.yaml",
+            "smairt.yaml is missing required field(s): "
+            + "; ".join(problems)
+            + f".\n\nA correct smairt.yaml looks like this:\n\n{example}",
+        )
+    ]
 
 
 # --- rule 1: frontmatter schema ----------------------------------------------
@@ -486,6 +652,25 @@ def _is_closed(kind: UnitKind, status: str | None) -> bool:
     return status in _CLOSED_QUESTION_STATUSES
 
 
+def _is_inside(candidate: Path, project_root: Path) -> bool:
+    """Does ``candidate`` still land inside ``project_root`` once ``../`` is worked out?
+
+    Uses :meth:`Path.resolve` on both sides so the comparison is made on real,
+    symlink-free paths rather than on the text of the path — ``a/../b`` and
+    ``b`` are the same place, and only ``resolve()`` knows that. Called with
+    ``strict=False`` semantics deliberately: a pointer at a path that does not
+    exist yet still needs its *location* judged, and "outside the project" is
+    the more useful answer than "missing".
+    """
+    try:
+        resolved_root = project_root.resolve()
+        return resolved_root == candidate.resolve() or resolved_root in candidate.resolve().parents
+    except OSError:
+        # An unreadable or cyclic symlink on the way out: treat as not resolved
+        # rather than letting an OSError escape a read-only audit.
+        return False
+
+
 def _pointer_resolves(
     unit_path: Path, project_root: Path, field: str, target: str, closed: bool
 ) -> bool:
@@ -508,6 +693,14 @@ def _pointer_resolves(
     filesystem path, so rejecting one here (as "does not resolve", the same
     finding a broken relative path gets) is the correct reading of the
     contract, not a new restriction.
+
+    A *relative* target that climbs out of the project with ``../`` is
+    refused for exactly the same reason. ``paths: ../../../../etc/hosts``
+    is not absolute, so the check above lets it through, and it resolves to
+    a real file — so it passed cleanly while pointing at something the
+    project does not contain. Absolute and ``../``-escaping targets are two
+    spellings of one mistake, and both have to be caught here, not just the
+    one that looks like an escape.
     """
     # A reference unit's `paths:` (case 3, spec Part II) names pre-existing
     # paths relative to the PROJECT ROOT, not the unit folder — it points
@@ -516,6 +709,8 @@ def _pointer_resolves(
     if Path(target).is_absolute():
         return False
     candidate = base / target
+    if not _is_inside(candidate, project_root):
+        return False
     if candidate.exists():
         return True
     if field == "log" and not closed:
@@ -745,23 +940,25 @@ def _check_status_drift(project_root: Path, units: list[_Unit]) -> list[Finding]
 
 
 def _adoption_known_folders(project_root: Path) -> frozenset[str]:
-    """Read ``smairt.yaml``'s ``adoption.known_folders`` (empty if absent/malformed).
+    """Read ``smairt.yaml``'s ``adoption.known_folders`` (empty if absent/unreadable).
 
     ``smairt adopt`` records the top-level directories that already existed at
     adoption time here (Part II case 3); rule 6 treats them as recognized so an
     adopted project passes `smairt check` clean immediately. Folders appearing
     AFTER adoption are not in this list and still warn as usual.
+
+    Goes through :func:`smairt.project.read_project_config` rather than
+    parsing ``smairt.yaml`` itself, and stays silent (an empty result, same
+    as "no adoption record") when that fails — DG-1's degrade policy: the
+    file being unreadable is already surfaced once, systematically, by
+    fail-fast or rule SMAIRT011, so this one enhancement quietly not
+    applying is not a second thing to warn about. See the module docstring's
+    "Judgment calls" section.
     """
-    path = project_root / "smairt.yaml"
-    if not path.is_file():
+    config = project_module.read_project_config(project_root)
+    if config.data is None:
         return frozenset()
-    try:
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return frozenset()
-    if not isinstance(config, dict):
-        return frozenset()
-    adoption = config.get("adoption")
+    adoption = config.data.get("adoption")
     if not isinstance(adoption, dict):
         return frozenset()
     folders = adoption.get("known_folders")
@@ -780,6 +977,15 @@ def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Findi
     (background/data/scripts/experiments/results/hpc) or one this project's
     ``smairt adopt`` already recorded as pre-existing (see
     :func:`_adoption_known_folders`).
+
+    DG-3 sharpens case (2)'s message when the unrecognized folder itself
+    contains a ``smairt.yaml`` — that is specifically a SECOND SMAIRT project
+    nested inside this one (most likely created by ``smairt new`` run from
+    inside this project, which now warns about this at creation time too —
+    see :func:`smairt.project.find_enclosing_project`), not just some
+    unfamiliar folder, and naming that cause directly saves the researcher
+    from having to work it out themselves the way the friction walk's
+    reproduction did.
     """
     findings: list[Finding] = []
     experiments_dir = project_root / "experiments"
@@ -804,16 +1010,65 @@ def _check_structure_drift(project_root: Path, units: list[_Unit]) -> list[Findi
                 continue
             if entry.name in recognized:
                 continue
-            findings.append(
-                Finding(
-                    RULE_STRUCTURE_DRIFT,
-                    WARNING,
-                    entry.name,
+            if (entry / "smairt.yaml").is_file():
+                message = (
+                    f"top-level folder '{entry.name}' is itself a SMAIRT project (it has its "
+                    "own smairt.yaml) nested inside this one -- commands run from inside it "
+                    "use ITS smairt.yaml, not this project's; move it out from under "
+                    f"{project_root.name}/, or ignore this warning if the nesting is intentional."
+                )
+            else:
+                message = (
                     "top-level folder is not part of the known scaffold "
                     "(background/, data/, scripts/, experiments/, results/, hpc/) "
-                    "or this adopted project's known_folders",
+                    "or this adopted project's known_folders"
                 )
+            findings.append(Finding(RULE_STRUCTURE_DRIFT, WARNING, entry.name, message))
+    return findings
+
+
+# --- README-less unit folder (rule SMAIRT012) ---------------------------------
+
+
+def _check_missing_readme_folders(project_root: Path) -> list[Finding]:
+    """Rule SMAIRT012 (warning): a folder directly under experiments/ with no README.md.
+
+    :func:`_load_units` (and :func:`smairt.index.scan_units`) both gate on
+    ``entry.is_dir() and readme.is_file()`` — a folder failing that second
+    half is silently skipped everywhere, so a researcher who created a
+    folder by hand (or deleted its README) gets no signal their work is
+    untracked (DG-2). Warning, not error or suggestion: the same severity as
+    SMAIRT006 structure drift, the same class of problem (the project still
+    "works", it just doesn't match a shape `smairt` can see). The message
+    names the one supported fix (``smairt unit new``) rather than guessing
+    whether this was meant to be a stage or a question.
+
+    Skips dot-prefixed folders (``.ipynb_checkpoints/``, an editor's
+    ``.git``-like scratch directory, ...) the same way
+    :func:`_check_structure_drift`'s top-level scan does — those are tool
+    artifacts a researcher didn't create on purpose, not untracked work, and
+    flagging them would be noise rather than signal.
+    """
+    experiments_dir = project_root / "experiments"
+    if not experiments_dir.is_dir():
+        return []
+    findings: list[Finding] = []
+    for entry in sorted(experiments_dir.iterdir(), key=lambda item: item.name):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if (entry / "README.md").is_file():
+            continue
+        findings.append(
+            Finding(
+                RULE_MISSING_README,
+                WARNING,
+                f"experiments/{entry.name}",
+                "folder has no README.md, so it is invisible to check/status/index; "
+                "`smairt unit new` is the only supported way to create a unit -- remove "
+                "this folder if it was a mistake, or create a real unit for the work "
+                "inside it.",
             )
+        )
     return findings
 
 
@@ -900,6 +1155,75 @@ def _check_prompted_by(project_root: Path, units: list[_Unit]) -> list[Finding]:
                     "question was not actually prompted by another unit's result.",
                 )
             )
+    return findings
+
+
+def _check_prompted_by_cycle(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT013 (error): a prompted_by: chain that loops back on itself.
+
+    Only reachable by hand-editing frontmatter (nothing ``smairt`` itself
+    writes can create one: ``--from`` is validated at creation, and a
+    project's units are only ever added, never reparented, by this tool) —
+    but when it happens, rule SMAIRT008 alone reports the project as
+    perfectly clean, because every link in a cycle DOES resolve to a real
+    unit; only the graph as a whole is broken. :func:`smairt.index.
+    _ordered_for_index` already has its own guard against this (verified
+    under a hard 15-second timeout to never hang or crash) but that guard's
+    job is only to still RENDER something; it silently drops the cycle from
+    the lineage nesting with no message that anything was dropped. This
+    function is a separate, from-scratch walk added purely to REPORT the
+    same cycle that guard was silently working around — it does not call
+    into, share state with, or change that function in any way.
+
+    Builds one edge per question unit whose ``prompted_by:`` already
+    resolves (see :func:`_prompted_by_resolves`) — a dangling link is
+    SMAIRT008's finding, not a cycle candidate, so the two rules partition
+    the same field's possible problems rather than double-reporting the same
+    one. Because a question has at most one ``prompted_by:`` target, this
+    graph has out-degree <= 1 everywhere (a "functional graph"), so a plain
+    three-color walk (unvisited / in-progress / done) finds every cycle in
+    O(n) with no recursion and no need for a general cycle-finding
+    algorithm: following any node's single outgoing edge either runs off the
+    end (no cycle), rejoins an already-fully-walked chain (no NEW cycle), or
+    comes back to a node already ``in-progress`` in THIS walk -- which is
+    exactly a cycle, read straight off the path collected so far.
+    """
+    edges: dict[str, str] = {}
+    for unit in units:
+        if unit.kind is not UnitKind.question:
+            continue
+        target = str(unit.fields.get("prompted_by", "")).strip()
+        if target and _prompted_by_resolves(project_root, target):
+            edges[unit.path.name] = target
+
+    unvisited, in_progress, done = 0, 1, 2
+    state: dict[str, int] = {}
+    findings: list[Finding] = []
+
+    for start in edges:
+        if state.get(start, unvisited) != unvisited:
+            continue
+        path: list[str] = []
+        node: str | None = start
+        while node is not None and state.get(node, unvisited) == unvisited:
+            state[node] = in_progress
+            path.append(node)
+            node = edges.get(node)
+        if node is not None and state.get(node) == in_progress:
+            cycle = path[path.index(node) :]
+            loop = " -> ".join(f"experiments/{name}" for name in (*cycle, cycle[0]))
+            findings.append(
+                Finding(
+                    RULE_PROMPTED_BY_CYCLE,
+                    ERROR,
+                    f"experiments/{cycle[0]}/README.md",
+                    f"prompted_by: forms a cycle: {loop} -- a question cannot have "
+                    "(even indirectly) been prompted by itself; break the loop by "
+                    "removing or correcting one unit's prompted_by: field.",
+                )
+            )
+        for name in path:
+            state[name] = done
     return findings
 
 

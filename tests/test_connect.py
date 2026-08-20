@@ -620,6 +620,63 @@ def test_connect_none_harness_is_rejected() -> None:
         connect_module.connect(Path("/does/not/matter"), Harness.none, strict=False)
 
 
+# --- DG-1: broken smairt.yaml degrade policy --------------------------------------
+#
+# In normal use, `smairt connect` never reaches read_strict_hooks/_record_harness
+# with a genuinely unparseable smairt.yaml -- find_project_root's fail-fast (see
+# cli.py's _require_project_root) already stops the command before either runs.
+# These tests call the connect.py functions directly (as a broken degrade path
+# could still be reached by a future direct API caller, or by the narrower "valid
+# YAML, wrong shape" case fail-fast doesn't catch) to pin down DG-1's chosen
+# policy: silent fallback to the safe default, not a per-function warning.
+
+
+def test_read_strict_hooks_silently_defaults_false_on_a_non_mapping_config(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    (root / "smairt.yaml").write_text("- a\n- b\n", encoding="utf-8")
+
+    assert connect_module.read_strict_hooks(root) is False
+
+
+def test_read_strict_hooks_silently_defaults_false_on_missing_smairt_yaml(
+    tmp_path: Path,
+) -> None:
+    assert connect_module.read_strict_hooks(tmp_path) is False
+
+
+def test_record_harness_warns_when_it_cannot_record_the_harness(tmp_path: Path) -> None:
+    """A write the researcher asked for that did not happen must say so.
+
+    The smairt.yaml degrade policy splits on reads versus writes: a read falls
+    back silently to a safe default, but `smairt connect` was asked to record
+    this harness. Staying quiet would let the command list every wiring file it
+    wrote and exit 0 while the harness never reached smairt.yaml, leaving the
+    researcher to discover it from a later `smairt check`.
+    """
+    root = _project(tmp_path)
+    (root / "smairt.yaml").write_text("- a list\n- not a mapping\n", encoding="utf-8")
+
+    result = connect_module.connect(root, Harness.codex, strict=False)
+
+    assert any("harnesses:" in warning for warning in result.warned), result.warned
+    assert "smairt.yaml" not in result.written
+
+
+def test_connect_does_not_crash_when_smairt_yaml_is_a_yaml_list(tmp_path: Path) -> None:
+    """The whole `connect()` call (harness wiring + _record_harness) must
+    survive a broken-shape smairt.yaml without raising -- the harness's own
+    files still get written; only the harnesses:/strict_hooks bookkeeping is
+    silently skipped."""
+    root = _project(tmp_path)
+    (root / "smairt.yaml").write_text("- a\n- b\n", encoding="utf-8")
+
+    result = connect_module.connect(root, Harness.codex, strict=False)
+
+    assert ".codex/hooks.json" in result.written
+
+
 # --- CI template ------------------------------------------------------------------
 
 

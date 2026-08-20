@@ -382,6 +382,110 @@ def test_cli_unit_new_question_with_ref(tmp_path: Path, monkeypatch: pytest.Monk
     assert fields["paths"] == ["old_analysis"]
 
 
+# --- DG-5: --ref is validated at creation, exactly as --from is -----------------
+
+
+def test_create_question_ref_to_a_nonexistent_path_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    with pytest.raises(ValueError, match="does not exist"):
+        create_question(root, "Broken ref", ref_paths=["does/not/exist.txt"])
+
+    assert {p.name for p in (root / "experiments").iterdir()} == {"README.md"}
+
+
+def test_create_question_ref_to_an_absolute_path_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not part of the project\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="absolute"):
+        create_question(root, "Absolute ref", ref_paths=[str(outside)])
+
+
+def test_create_question_ref_that_escapes_the_project_root_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not part of the project\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="escapes the project root"):
+        create_question(root, "Escaping ref", ref_paths=["../outside.txt"])
+
+
+def test_create_stage_ref_to_a_nonexistent_path_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    with pytest.raises(ValueError, match="does not exist"):
+        create_stage(root, "Broken ref", ref_paths=["does/not/exist"])
+
+
+def test_create_stage_ref_to_an_absolute_path_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+
+    with pytest.raises(ValueError, match="absolute"):
+        create_stage(root, "Absolute ref", ref_paths=[str(outside)])
+
+
+def test_create_question_ref_that_exists_is_still_accepted(tmp_path: Path) -> None:
+    # A real, in-project path must still work -- the validation rejects the
+    # three broken shapes, not every --ref.
+    root = _project(tmp_path)
+    (root / "old_analysis").mkdir()
+
+    question = create_question(root, "Valid ref", ref_paths=["old_analysis"])
+
+    fields, _ = frontmatter.read(question / "README.md")
+    assert fields["paths"] == ["old_analysis"]
+
+
+def test_cli_unit_new_ref_to_a_nonexistent_path_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(
+        app,
+        ["unit", "new", "question", "--title", "Broken ref", "--ref", "does/not/exist.txt"],
+    )
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+    assert {p.name for p in (root / "experiments").iterdir()} == {"README.md"}
+
+
+def test_cli_unit_new_ref_to_an_absolute_path_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["unit", "new", "question", "--title", "Absolute ref", "--ref", str(outside)],
+    )
+
+    assert result.exit_code == 1
+    assert "absolute" in result.output
+
+
+def test_cli_unit_new_ref_help_promises_validation_at_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = runner.invoke(app, ["unit", "new", "--help"])
+
+    assert result.exit_code == 0, result.output
+    # Rich's help renderer wraps and box-draws the text, so normalize
+    # whitespace/border characters before matching -- the promise must
+    # appear twice (once for --from, once for --ref).
+    normalized = " ".join(result.output.replace("│", " ").split())
+    assert normalized.count("Validated to exist at creation.") == 2
+
+
 def test_smairt_yaml_is_untouched_by_yaml_dump_quirks_after_unit_creation(tmp_path: Path) -> None:
     # Sanity check that creating units does not disturb the project's identity file.
     root = _project(tmp_path)

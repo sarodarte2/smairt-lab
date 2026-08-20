@@ -112,6 +112,50 @@ def next_stage_number(experiments_dir: Path) -> int:
     return max(numbers, default=0) + 1
 
 
+def _validate_ref_paths(project_root: Path, ref_paths: Sequence[str]) -> None:
+    """Validate every ``--ref`` target exists, at creation, the same way ``--from`` does.
+
+    ``--ref`` points at pre-existing code by definition — a reference unit
+    (case 3) is exactly "code that already exists elsewhere in the tree", so
+    unlike ``--from`` (whose origin unit could conceivably not exist yet in
+    some odd ordering) there is no legitimate forward reference to allow.
+    Before this validation existed, ``smairt unit new --help`` promised
+    ``--from`` was "Validated to exist at creation" but said nothing for
+    ``--ref``, and a nonexistent/absolute/``..``-escaping ``--ref`` was
+    silently accepted, only (sometimes) caught later by `smairt check`'s
+    rule SMAIRT002 — or not caught at all for an absolute path that happens
+    to exist somewhere else on the machine (DG-5). This closes that gap the
+    same way ``create_question``'s ``prompted_by`` validation closes the
+    equivalent gap for ``--from``: a plain ``ValueError`` naming the exact
+    problem, raised before any file is written.
+
+    Rejects, in order: an absolute path (never legitimate — every pointer
+    field in this project is documented as relative, see
+    :mod:`smairt.check`'s :func:`~smairt.check._pointer_resolves`); a path
+    that resolves outside ``project_root`` via ``..`` segments; and a path
+    that, once confirmed to stay inside the project, doesn't actually exist.
+    """
+    resolved_root = project_root.resolve()
+    for target in ref_paths:
+        candidate = Path(target)
+        if candidate.is_absolute():
+            raise ValueError(
+                f"--ref must be relative to the project root, not absolute: {target!r} "
+                "(pass the path the way you'd see it from the project's top level)."
+            )
+        resolved = (project_root / candidate).resolve()
+        if not resolved.is_relative_to(resolved_root):
+            raise ValueError(
+                f"--ref escapes the project root: {target!r} resolves to {resolved}, "
+                f"which is outside {resolved_root} (remove the leading '../' segments)."
+            )
+        if not resolved.exists():
+            raise ValueError(
+                f"--ref target does not exist: {target!r} "
+                "(check the path, or create it before referencing it here)."
+            )
+
+
 def _make_standard_subfolders(unit_dir: Path) -> None:
     """Create ``logs/``, ``out/``, ``figures/`` inside a unit, each holding a ``.gitkeep``.
 
@@ -169,8 +213,13 @@ def create_stage(
     ``ref_paths`` (case 3, spec Part II): a non-empty sequence makes this a
     thin reference unit — README only, no logs/out/figures/ — whose
     frontmatter carries ``paths:`` (the referenced pre-existing paths,
-    relative to the project root).
+    relative to the project root). Each path is validated at creation (see
+    :func:`_validate_ref_paths`) exactly as ``--from`` is: it must exist,
+    must be relative, and must not escape the project root via ``..``.
     """
+    if ref_paths:
+        _validate_ref_paths(project_root, ref_paths)
+
     experiments_dir = project_root / "experiments"
     number = next_stage_number(experiments_dir)
     unit_dir = experiments_dir / f"{number:02d}_{slugify(title, fallback='stage', sep='-')}"
@@ -247,6 +296,9 @@ def create_question(
     ``smairt check``. The field is never required — pass nothing and no
     ``prompted_by:`` line is written at all.
     """
+    if ref_paths:
+        _validate_ref_paths(project_root, ref_paths)
+
     today = created or date.today()
     slug = slugify(title, fallback="question", sep="-")
     unit_dir = project_root / "experiments" / f"{today.isoformat()}_{slug}"

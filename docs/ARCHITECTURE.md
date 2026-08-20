@@ -67,7 +67,7 @@ read through `importlib.resources` rather than a path built from `__file__`.
 
 ## How a finding travels from a rule to the terminal
 
-`smairt check` has ten rules that produce findings (`SMAIRT001`-`SMAIRT010`)
+`smairt check` has thirteen rules that produce findings (`SMAIRT001`-`SMAIRT013`)
 and five that produce advisory suggestions (`SMAIRT101`-`SMAIRT105`) — each a
 `_check_*` or `_suggest_*` function in `check.py`. `run_checks()` loads every unit
 once (`_load_units`) and hands that same list to each rule in turn, collecting

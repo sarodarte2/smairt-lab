@@ -82,6 +82,13 @@ smairt adopt --name "Legacy Imaging" --researcher "A. Researcher" \
   --harness none
 ```
 
+Running `smairt new` from inside a directory that is already a SMAIRT
+project (any parent folder holding its own `smairt.yaml`) still creates the
+new project, but warns that it is nesting one project inside another and
+names which project's `smairt.yaml` wins for commands run inside the new
+one — the outer project only ever sees the nested folder as unfamiliar
+structure otherwise.
+
 ## The shape you get
 
 `smairt new` writes ordinary, readable files — this is the actual tree from
@@ -152,6 +159,7 @@ Two more shapes worth knowing: `--receipt --tool ... --tool-version ...
 of your own code; `--ref path/to/existing` (repeatable) creates a thin,
 README-only unit pointing at code that already exists elsewhere in the tree
 — how `smairt adopt` gives pre-existing work a unit without moving it.
+`--ref`, like `--from`, is validated to exist at creation.
 
 Two commands orient you at any point:
 

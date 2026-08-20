@@ -50,6 +50,40 @@ class Harness(str, Enum):
     none = "none"
 
 
+class ProjectConfigError(RuntimeError):
+    """Raised by :func:`find_project_root` when the nearest ``smairt.yaml`` exists
+    but is not valid YAML.
+
+    This is DG-1's "fail fast" half (see :mod:`smairt.check`'s "Judgment
+    calls" section for the full policy): every command resolves its project
+    root through :func:`find_project_root`, so raising here — rather than
+    silently walking past a broken config or returning it as if it were
+    fine — means every command gives the researcher the identical, repair-
+    focused message at the identical point, instead of each command
+    discovering the breakage its own way (or not at all) several calls
+    later. A file that PARSES but is missing or has the wrong fields is
+    deliberately NOT this function's problem — that is rule SMAIRT011,
+    checked once the project root is already known to be usable.
+    """
+
+
+def _find_config_upward(start: Path) -> Path | None:
+    """The nearest ``smairt.yaml`` at or above ``start``, by existence only.
+
+    Shared by :func:`find_project_root` (which additionally validates the
+    result parses) and :func:`find_enclosing_project` (DG-3's nesting check
+    for ``smairt new``, which deliberately does NOT validate — a broken
+    config in some UNRELATED outer project is not a reason to refuse
+    creating a new one, only a reason to note the nesting).
+    """
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        config = candidate / "smairt.yaml"
+        if config.is_file():
+            return config
+    return None
+
+
 def find_project_root(start: Path) -> Path | None:
     """Walk upward from ``start`` looking for the nearest ``smairt.yaml``.
 
@@ -59,12 +93,140 @@ def find_project_root(start: Path) -> Path | None:
     ``smairt check`` from any subfolder of their project, not just the top.
     Returns ``None`` if no ``smairt.yaml`` is found before reaching the
     filesystem root (i.e. we're not inside a SMAIRT project at all).
+
+    Raises :class:`ProjectConfigError` if a ``smairt.yaml`` IS found but is
+    not valid YAML (DG-1's fail-fast half) — every caller of this function
+    is expected to let that propagate up to a `smairt <command>: ...`
+    error, not swallow it, so the researcher hears about a broken identity
+    file immediately rather than getting a confusing, unrelated failure
+    three calls later.
     """
-    current = start.resolve()
-    for candidate in (current, *current.parents):
-        if (candidate / "smairt.yaml").is_file():
-            return candidate
-    return None
+    config = _find_config_upward(start)
+    if config is None:
+        return None
+    try:
+        yaml.safe_load(config.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ProjectConfigError(
+            f"{config} is not valid YAML ({_yaml_problem_summary(error)}).\n\n"
+            "A correct smairt.yaml looks like this:\n\n" + example_smairt_yaml()
+        ) from error
+    return config.parent
+
+
+def find_enclosing_project(start: Path) -> Path | None:
+    """The nearest EXISTING SMAIRT project's root at or above ``start``, if any.
+
+    Used only by ``smairt new``'s nesting warning (DG-3): it needs to know
+    "is there already a project here", not whether that OTHER project's
+    ``smairt.yaml`` happens to be valid -- an outer project's broken config
+    is that project's own problem (it will get its own fail-fast the next
+    time a command is run inside IT), not a reason to block creating a new,
+    unrelated project nested under it. This is why it goes through
+    :func:`_find_config_upward` directly rather than :func:`find_project_root`,
+    which would raise on exactly that case.
+    """
+    config = _find_config_upward(start)
+    return config.parent if config is not None else None
+
+
+def _yaml_problem_summary(error: yaml.YAMLError) -> str:
+    """A short, human-readable "what's wrong and where" from a PyYAML exception.
+
+    Never the raw ``str(error)`` -- that text says ``in "<unicode string>"``
+    (PyYAML has no idea it was reading a file), which reads as an internal
+    detail to a researcher who has never seen a YAML error before, and often
+    also repeats the problem twice (once for context, once for the failure
+    itself). Prefers ``context_mark`` over ``problem_mark`` when both are
+    present: for an unterminated quote or an unclosed ``[...]`` list,
+    ``problem_mark`` points at the END of the file (where PyYAML gave up),
+    while ``context_mark`` points at the line the broken construct actually
+    STARTS on -- the line a researcher needs to look at to fix it.
+    """
+    if not isinstance(error, yaml.MarkedYAMLError):
+        return str(error).splitlines()[0]
+    problem = error.problem or str(error).splitlines()[0]
+    mark = error.context_mark or error.problem_mark
+    if mark is not None:
+        return f"{problem}, line {mark.line + 1}"
+    return problem
+
+
+@dataclass(frozen=True)
+class ProjectConfig:
+    """The result of trying to read ``smairt.yaml`` as a usable mapping.
+
+    ``data`` is ``None`` whenever the file can't be used as a mapping at all
+    -- missing, not valid YAML, empty, or parsed to something other than a
+    YAML mapping (a list, a bare string, ...) -- with ``problem`` naming why
+    in each case. Every reader of ``smairt.yaml`` elsewhere in this codebase
+    (:mod:`smairt.check`'s rule SMAIRT011 and its adoption-folders reader,
+    :mod:`smairt.connect`'s ``strict_hooks``/``harnesses`` readers) goes
+    through :func:`read_project_config` rather than calling
+    ``yaml.safe_load`` itself, so there is exactly one place that decides
+    what counts as "unreadable" and how to describe why. See
+    :mod:`smairt.check`'s "Judgment calls" section for the degrade policy
+    built on top of this (DG-1).
+    """
+
+    data: dict[str, object] | None
+    problem: str | None
+
+
+def read_project_config(project_root: Path) -> ProjectConfig:
+    """Read and parse ``project_root / smairt.yaml`` as a mapping.
+
+    Defense in depth, not the primary guard: a YAML SYNTAX error (the kind
+    ``yaml.safe_load`` itself raises on) is already caught earlier, and much
+    more loudly, by :func:`find_project_root`'s fail-fast -- every `smairt`
+    command already refuses to run at all once it can't resolve a project
+    whose ``smairt.yaml`` doesn't parse, so by the time this function runs
+    inside a real command, ``project_root`` was already proven to have a
+    parseable config moments earlier on the same read. This function still
+    catches ``yaml.YAMLError`` itself (rather than assuming that can't
+    happen) so it never raises on a caller that reaches it without going
+    through :func:`find_project_root` first -- a test, or a future direct
+    library caller.
+    """
+    path = project_root / "smairt.yaml"
+    if not path.is_file():
+        return ProjectConfig(None, "smairt.yaml is missing")
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        return ProjectConfig(
+            None, f"smairt.yaml is not valid YAML ({_yaml_problem_summary(error)})"
+        )
+    if raw is None:
+        return ProjectConfig(None, "smairt.yaml is empty")
+    if not isinstance(raw, dict):
+        return ProjectConfig(
+            None,
+            "smairt.yaml must be a YAML mapping (key: value pairs), not a list or a single value",
+        )
+    return ProjectConfig(raw, None)
+
+
+def example_smairt_yaml() -> str:
+    """A representative, correct ``smairt.yaml`` an error message can print verbatim.
+
+    Built by calling :func:`render_identity` itself with plausible placeholder
+    values, rather than a separately hand-maintained string constant -- so
+    this can never drift out of sync with the schema ``render_identity``
+    actually writes the way an independent example string could. DG-1's hard
+    requirement is that a researcher can repair a broken ``smairt.yaml`` "by
+    eye, with no docs lookup" -- this is what makes that possible: every
+    fail-fast and SMAIRT011 message ends with this, so the correct shape is
+    always one scroll away from the broken one.
+    """
+    return render_identity(
+        "My Project",
+        "A. Researcher",
+        "One-line description of what this project is trying to answer.",
+        Harness.claude_code,
+        date(2026, 1, 1),
+        __version__,
+    )
 
 
 def create_project(

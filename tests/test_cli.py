@@ -173,6 +173,76 @@ def test_new_git_flag_inside_an_existing_repo_skips_instead_of_nesting(
     assert not (root / ".git").exists()
 
 
+def test_new_inside_an_existing_smairt_project_warns_but_still_creates(
+    tmp_path: Path,
+) -> None:
+    """DG-3: `smairt new` run inside an existing SMAIRT project must warn
+    (naming the situation, and which project wins for commands run inside
+    the new one) but still create the project -- matching the voice of the
+    Git nesting message right above (`init_git`'s "this project sits inside
+    an existing Git repository...")."""
+    outer = tmp_path / "outer"
+    create_project(
+        outer,
+        name="Outer",
+        researcher="Ada Lovelace",
+        description="The outer project.",
+        harness=Harness.none,
+        created=date(2026, 1, 1),
+        scaffold_version="0.0.0-test",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Inner Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Nested inside the outer project.",
+            "--path",
+            str(outer),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "sits inside an existing SMAIRT project" in result.output
+    inner = outer / "inner_project"
+    assert (inner / "smairt.yaml").is_file()
+
+
+def test_new_outside_any_project_prints_no_nesting_warning(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Standalone Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Not nested inside anything.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "sits inside an existing SMAIRT project" not in result.output
+
+
 def test_new_no_git_flag_leaves_no_git_directory(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
@@ -462,6 +532,53 @@ def test_cli_check_refuses_outside_a_project(
 
     assert result.exit_code != 0
     assert "not a SMAIRT project" in result.output
+
+
+def test_cli_check_fails_fast_on_unparseable_smairt_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DG-1's fail-fast half: a genuine YAML syntax error in smairt.yaml must
+    stop `check` with a clean, repair-focused message -- never a traceback,
+    never a silently "clean" project."""
+    root = _check_project(tmp_path)
+    (root / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["check"])
+
+    assert result.exit_code == 1, result.output
+    assert "not valid YAML" in result.output
+    assert "line 2" in result.output
+    assert "A correct smairt.yaml looks like this" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_status_fails_fast_on_unparseable_smairt_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _check_project(tmp_path)
+    (root / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code != 0
+    assert "not valid YAML" in result.output
+
+
+def test_cli_hook_fails_fast_on_unparseable_smairt_yaml_and_never_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Exit 1, never 2 -- exit 2 must stay reserved for "findings exist,
+    # block the action" in every harness hook protocol this tool speaks.
+    root = _check_project(tmp_path)
+    (root / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["hook", "gate"])
+
+    assert result.exit_code == 1, result.output
+    assert "not valid YAML" in result.output
 
 
 def test_cli_check_json_output_parses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

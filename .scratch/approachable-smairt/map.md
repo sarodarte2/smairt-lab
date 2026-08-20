@@ -105,16 +105,9 @@ Verified against the `v2-rebuild` working tree:
 - [Adversarial friction walk](issues/07-adversarial-friction-walk.md) — 13 findings against an installed tool. Worst: malformed YAML *inside* a well-formed frontmatter block crashed `check` — the command whose whole job is reporting frontmatter problems — with a traceback, exiting 1, indistinguishable from a normal findings exit. Also confirmed two things that held: nothing leaks outside the project root (`$HOME` diffed across all six harnesses plus `--ci`), and the `prompted_by:` cycle guard survives a hand-made 6-node cycle.
 - [Fix what the walk found](issues/08-fix-the-friction.md) — 8 defects fixed, 5 design gaps left for decisions. 264 tests, up from 244. **The hook exit-code contract was broken and is now restored *and* hardened**: `report`'s "always 0" and `gate`'s "2 means findings exist" no longer hold only while smairt is bug-free — an internal failure now exits 0 / 1 respectively, never 2, because blocking every edit in a session because smairt itself broke would wedge the researcher out of their own work.
 
-## Not yet specified
+- [Close the five design gaps](issues/12-close-the-friction-walk-design-gaps.md) — all five decided by the researcher and implemented: `SMAIRT011` (project identity) plus fail-fast on unparseable config, with a message that prints a correct `smairt.yaml` so it is repairable by eye; `SMAIRT012` (README-less folder, warning); nesting warned at creation and named specifically by `SMAIRT006`; `SMAIRT013` (`prompted_by:` cycle, error); `--ref` validated at creation like `--from`. Review catches: a `../`-escaping `paths:` still passed clean (same defect as ticket 08's absolute-path bug, other spelling), and the config degrade policy had been made consistent by deleting the one warning that existed — now split on **reads versus writes**, so a write the researcher asked for never fails silently.
 
-- **Five design gaps from the friction walk**, each a missing convention rather
-  than a misbehaviour, so each needs a decision before any code: `smairt.yaml`
-  has no validation of its own and degrades inconsistently across `check.py` and
-  `connect.py`; a unit folder with no README is invisible to every command;
-  nested SMAIRT projects are not flagged at creation; `prompted_by:` cycles are
-  not detected (though confirmed not to hang); `--ref` is not validated at
-  creation even though `--from`'s help text promises validation. See
-  [the inventory](research/07-friction-inventory.md).
+## Not yet specified
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats
   (pi's trust prompt, Codex's restart requirement, OpenCode's lack of a slash

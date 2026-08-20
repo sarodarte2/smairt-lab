@@ -16,7 +16,16 @@ import pytest
 import yaml
 
 from smairt.fsutil import PathExistsError
-from smairt.project import Harness, create_project, init_git
+from smairt.project import (
+    Harness,
+    ProjectConfigError,
+    create_project,
+    example_smairt_yaml,
+    find_enclosing_project,
+    find_project_root,
+    init_git,
+    read_project_config,
+)
 
 GOLDEN_FIXTURE = Path(__file__).parent / "fixtures" / "golden"
 
@@ -276,3 +285,149 @@ def test_gitignore_excludes_dataset_contents_but_tracks_dataset_readmes(
     assert "data/README.md" in tracked
     assert "data/some_dataset/README.md" in tracked
     assert "data/some_dataset/raw.csv" not in tracked
+
+
+# --- DG-1: smairt.yaml fail-fast + read_project_config -------------------------
+
+
+def test_find_project_root_returns_none_outside_any_project(tmp_path: Path) -> None:
+    assert find_project_root(tmp_path) is None
+
+
+def test_find_project_root_finds_the_root_from_a_subdirectory(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+    deep = root / "experiments" / "nested"
+    deep.mkdir(parents=True)
+
+    assert find_project_root(deep) == root
+
+
+def test_find_project_root_raises_on_a_yaml_syntax_error(tmp_path: Path) -> None:
+    # DG-1's fail-fast half: a genuine YAML syntax error (not just a schema
+    # problem) must be caught the moment the project root is resolved, the
+    # same point every `smairt` command already goes through, so every
+    # command gives the same message instead of each discovering the
+    # breakage its own way (or a raw traceback) several calls later.
+    root = _create(tmp_path)
+    (root / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+
+    with pytest.raises(ProjectConfigError) as excinfo:
+        find_project_root(root)
+
+    message = str(excinfo.value)
+    assert "smairt.yaml" in message
+    assert "not valid YAML" in message
+    assert "line 2" in message
+    # The hard requirement: showing the correct shape, not just naming the problem.
+    assert "A correct smairt.yaml looks like this" in message
+    assert "name: My Project" in message
+
+
+def test_find_project_root_raises_on_a_stray_quote(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+    (root / "smairt.yaml").write_text('name: "Unterminated\nresearcher: X\n', encoding="utf-8")
+
+    with pytest.raises(ProjectConfigError) as excinfo:
+        find_project_root(root)
+
+    message = str(excinfo.value)
+    assert "not valid YAML" in message
+    assert "line" in message
+
+
+def test_find_project_root_does_not_raise_on_a_schema_only_problem(tmp_path: Path) -> None:
+    # A file that PARSES but is missing a required field (or is empty, or is
+    # a list) is NOT this function's job -- that is rule SMAIRT011, checked
+    # only once the project root is already known to be resolvable. See
+    # tests/test_check.py for the SMAIRT011 coverage of these cases.
+    root = _create(tmp_path)
+    (root / "smairt.yaml").write_text("", encoding="utf-8")
+
+    assert find_project_root(root) == root
+
+
+def test_read_project_config_reports_missing_file(tmp_path: Path) -> None:
+    result = read_project_config(tmp_path)
+
+    assert result.data is None
+    assert result.problem is not None
+    assert "missing" in result.problem
+
+
+def test_read_project_config_reports_empty_file(tmp_path: Path) -> None:
+    (tmp_path / "smairt.yaml").write_text("", encoding="utf-8")
+
+    result = read_project_config(tmp_path)
+
+    assert result.data is None
+    assert result.problem is not None
+    assert "empty" in result.problem
+
+
+def test_read_project_config_reports_a_yaml_list_as_not_a_mapping(tmp_path: Path) -> None:
+    (tmp_path / "smairt.yaml").write_text("- a\n- b\n", encoding="utf-8")
+
+    result = read_project_config(tmp_path)
+
+    assert result.data is None
+    assert result.problem is not None
+    assert "mapping" in result.problem
+
+
+def test_read_project_config_reports_a_syntax_error_defensively(tmp_path: Path) -> None:
+    # Defense in depth: read_project_config never raises even on a genuine
+    # YAML syntax error, since a caller could reach it without having gone
+    # through find_project_root's fail-fast first (a test, or a future
+    # direct library caller).
+    (tmp_path / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+
+    result = read_project_config(tmp_path)
+
+    assert result.data is None
+    assert result.problem is not None
+    assert "not valid YAML" in result.problem
+
+
+def test_read_project_config_returns_data_for_a_normal_project(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+
+    result = read_project_config(root)
+
+    assert result.problem is None
+    assert result.data is not None
+    assert result.data["name"] == "Test Project"
+
+
+def test_example_smairt_yaml_is_itself_a_valid_mapping_with_the_identity_fields() -> None:
+    example = example_smairt_yaml()
+    parsed = yaml.safe_load(example)
+
+    assert isinstance(parsed, dict)
+    assert parsed["name"] and parsed["researcher"] and parsed["description"]
+
+
+# --- DG-3: nesting detection (find_enclosing_project) ---------------------------
+
+
+def test_find_enclosing_project_returns_none_outside_any_project(tmp_path: Path) -> None:
+    assert find_enclosing_project(tmp_path) is None
+
+
+def test_find_enclosing_project_finds_an_outer_project(tmp_path: Path) -> None:
+    outer = _create(tmp_path)
+    inner_parent = outer / "some_subdir"
+    inner_parent.mkdir()
+
+    assert find_enclosing_project(inner_parent) == outer
+
+
+def test_find_enclosing_project_does_not_raise_on_a_broken_outer_config(tmp_path: Path) -> None:
+    # A broken smairt.yaml in the OUTER (unrelated, from this call's point of
+    # view) project is that project's own problem, not a reason to refuse
+    # resolving the nesting check for a new, different project.
+    outer = _create(tmp_path)
+    (outer / "smairt.yaml").write_text("name: X\n  researcher: bad indent\n", encoding="utf-8")
+    inner_parent = outer / "some_subdir"
+    inner_parent.mkdir()
+
+    assert find_enclosing_project(inner_parent) == outer

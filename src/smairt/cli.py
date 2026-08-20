@@ -98,9 +98,16 @@ def _require_project_root(command: str) -> Path:
     project" message is worded identically everywhere.
 
     ``hook`` deliberately does not use this helper — see
-    :data:`_HOOK_OUTSIDE_PROJECT_MESSAGE`.
+    :data:`_HOOK_OUTSIDE_PROJECT_MESSAGE`. Also catches
+    :class:`smairt.project.ProjectConfigError` (DG-1's fail-fast: a
+    ``smairt.yaml`` was found but isn't valid YAML) and turns it into the
+    same ``smairt <command>: ...`` shape every other failure here uses,
+    rather than letting it propagate as a raw exception.
     """
-    root = project_module.find_project_root(Path.cwd())
+    try:
+        root = project_module.find_project_root(Path.cwd())
+    except project_module.ProjectConfigError as error:
+        _fail(command, str(error))
     if root is None:
         _fail(
             command, "not a SMAIRT project (no smairt.yaml found in this or any parent directory)."
@@ -238,7 +245,15 @@ def new(
             "name; using 'project' instead of a name derived from it.",
             err=True,
         )
-    root = (path or Path.cwd()) / slugify(name, fallback="project")
+    parent = path or Path.cwd()
+    # DG-3: check for nesting BEFORE creating anything, so the warning below
+    # is about an OUTER project already there, never the one about to be
+    # created. Existence-only (find_enclosing_project, not find_project_root)
+    # on purpose: a broken smairt.yaml in that outer, unrelated project is
+    # not a reason to refuse creating this new one -- see
+    # smairt.project.find_enclosing_project's docstring.
+    enclosing = project_module.find_enclosing_project(parent)
+    root = parent / slugify(name, fallback="project")
     try:
         project_module.create_project(
             root,
@@ -253,6 +268,20 @@ def new(
         _fail("new", str(error))
 
     typer.secho(f"Created {root}", fg=typer.colors.GREEN, bold=True)
+    if enclosing is not None:
+        # Still created (per DG-1's decision) -- this only names the
+        # situation. Voice matches init_git's own nesting message below
+        # ("this project sits inside an existing Git repository, so Git was
+        # left alone..."): plain language, says what happened and which
+        # project wins for commands run inside this one.
+        typer.echo(
+            f"Warning: this project sits inside an existing SMAIRT project "
+            f"({enclosing / 'smairt.yaml'}), so smairt commands run from inside {root} "
+            "will read ITS OWN smairt.yaml, not the outer project's -- the outer "
+            "project will only see this folder as unfamiliar structure (flagged as "
+            "SMAIRT006 by its own `smairt check`) unless the nesting is intentional.",
+            err=True,
+        )
     if harness is not Harness.none:
         result = connect_module.connect(root, harness, strict=False)
         _report_connect(result)
@@ -355,7 +384,13 @@ def hook(
     """
     if mode not in ("report", "gate"):
         _fail("hook", f"unknown mode {mode!r}. Choices: report, gate.")
-    root = project_module.find_project_root(Path.cwd())
+    try:
+        root = project_module.find_project_root(Path.cwd())
+    except project_module.ProjectConfigError as error:
+        # Still exits 1, never 2 -- see _HOOK_OUTSIDE_PROJECT_MESSAGE's own
+        # docstring for why exit 2 must stay reserved for "findings exist,
+        # block the action" and never mean "smairt itself couldn't run".
+        _fail("hook", str(error))
     if root is None:
         _fail("hook", _HOOK_OUTSIDE_PROJECT_MESSAGE)
     try:
@@ -499,7 +534,8 @@ def unit_new(
         help=(
             "Existing path this unit references, relative to the project root "
             "(repeatable). Creates a thin, README-only reference unit — case 3, "
-            "how pre-existing work gets a unit without moving it."
+            "how pre-existing work gets a unit without moving it. Validated to "
+            "exist at creation."
         ),
     ),
 ) -> None:

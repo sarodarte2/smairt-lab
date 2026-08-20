@@ -157,6 +157,13 @@ Judgment calls a reviewer should know about
   reaches disk. It is also *stated*, in every generated file's own notice —
   see :data:`_SCOPE_NOTE` — so a researcher reading the file (not this
   module's source) still sees the guarantee spelled out.
+* Broken ``smairt.yaml`` degrade policy (DG-1): :func:`read_strict_hooks` and
+  :func:`_record_harness` both read the file through
+  :func:`smairt.project.read_project_config` and silently fall back to their
+  safe default if it can't be read as a mapping, rather than each printing
+  its own warning (which is what these two functions used to disagree about
+  — see :mod:`smairt.check`'s "Judgment calls" section for the full policy
+  and why silent-here is actually the safe choice, not a regression).
 """
 
 from __future__ import annotations
@@ -170,7 +177,7 @@ import yaml
 
 from smairt import __version__
 from smairt.fsutil import write_or_warn
-from smairt.project import CLAUDE_BRIDGE, Harness
+from smairt.project import CLAUDE_BRIDGE, Harness, read_project_config
 from smairt.skills import list_skills, read_skill
 
 # --- public result type -------------------------------------------------------
@@ -349,44 +356,60 @@ def _write_or_warn(
 
 
 def read_strict_hooks(project_root: Path) -> bool:
-    """Read ``settings.strict_hooks`` from ``smairt.yaml`` (default ``False``)."""
-    path = project_root / "smairt.yaml"
-    if not path.is_file():
+    """Read ``settings.strict_hooks`` from ``smairt.yaml`` (default ``False``).
+
+    Goes through :func:`smairt.project.read_project_config` and falls back to
+    ``False`` -- silently, by design -- if ``smairt.yaml`` can't be read as a
+    mapping at all. This is DG-1's degrade policy, not an oversight: a YAML
+    SYNTAX error already stops every command (including the one that calls
+    this, ``smairt connect``) before this function ever runs, at
+    :func:`smairt.project.find_project_root`'s fail-fast; a file that parses
+    but is the wrong shape is rule SMAIRT011's job to surface, the next time
+    `smairt check` runs. See :mod:`smairt.check`'s "Judgment calls" section
+    for the full policy this and :func:`_record_harness` below both follow.
+    """
+    config = read_project_config(project_root)
+    if config.data is None:
         return False
-    try:
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        return False
-    if not isinstance(config, dict):
-        return False
-    settings = config.get("settings")
+    settings = config.data.get("settings")
     if not isinstance(settings, dict):
         return False
     return bool(settings.get("strict_hooks", False))
 
 
 def _record_harness(project_root: Path, harness: Harness, builder: _ResultBuilder) -> None:
-    """Append ``harness`` to ``smairt.yaml``'s ``harnesses:`` list if absent."""
-    path = project_root / "smairt.yaml"
-    if not path.is_file():
+    """Append ``harness`` to ``smairt.yaml``'s ``harnesses:`` list if absent.
+
+    Warns, rather than failing or staying quiet, when ``smairt.yaml`` cannot
+    be read as a mapping. The one DG-1 policy this module follows draws its
+    line at reads versus writes, not at call sites: a *read* that can fall
+    back to a documented safe default does so silently (see
+    :func:`read_strict_hooks`, which falls back to non-strict), because
+    nothing the researcher asked for has gone missing. This is a *write* --
+    the researcher ran ``smairt connect`` and asked for this harness to be
+    recorded. Skipping that silently would let the command report every file
+    it wrote and exit 0 while the harness never made it into the project's
+    identity file, and the researcher would only learn that from a later
+    ``smairt check``. A write that did not happen is always worth saying out
+    loud. See :mod:`smairt.check`'s "Judgment calls" section.
+    """
+    config = read_project_config(project_root)
+    if config.data is None:
+        builder.warned.append(
+            "smairt.yaml could not be read as a mapping, so this harness was not added to its "
+            "harnesses: list -- the wiring files above were still written. Run `smairt check` "
+            "to see what is wrong with smairt.yaml, then re-run this command."
+        )
         return
-    try:
-        config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
-        builder.warned.append("smairt.yaml could not be parsed; harnesses: list left untouched.")
-        return
-    if not isinstance(config, dict):
-        builder.warned.append("smairt.yaml is not a mapping; harnesses: list left untouched.")
-        return
-    harnesses = config.get("harnesses")
+    harnesses = config.data.get("harnesses")
     if not isinstance(harnesses, list):
         harnesses = []
     if harness.value in harnesses:
         return
     harnesses.append(harness.value)
-    config["harnesses"] = harnesses
-    path.write_text(
-        yaml.safe_dump(config, sort_keys=False, default_flow_style=False, allow_unicode=True),
+    config.data["harnesses"] = harnesses
+    (project_root / "smairt.yaml").write_text(
+        yaml.safe_dump(config.data, sort_keys=False, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",
     )
     builder.written.append("smairt.yaml")
