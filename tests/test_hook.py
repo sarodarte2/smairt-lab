@@ -96,5 +96,9 @@ def test_hook_refuses_outside_a_project(tmp_path: Path, monkeypatch: pytest.Monk
 
     result = runner.invoke(app, ["hook", "gate"])
 
-    assert result.exit_code not in (0, 2)
-    assert "not a SMAIRT project" in result.output + result.stderr
+    # Exit 1, never 2: a missing project is not a "findings exist" block signal,
+    # and 2 must stay reserved for that in harnesses where it means "block".
+    assert result.exit_code == 1
+    output = result.output + result.stderr
+    assert "not inside a SMAIRT project" in output
+    assert "global harness config" in output

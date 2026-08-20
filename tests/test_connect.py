@@ -353,6 +353,37 @@ def test_gemini_invalid_json_is_warned_about_and_untouched(tmp_path: Path) -> No
     assert any(".gemini/settings.json" in warning for warning in result.warned)
 
 
+# --- project scoping -----------------------------------------------------------
+
+
+def test_every_harness_only_ever_writes_inside_the_project(tmp_path: Path) -> None:
+    """Every path ``connect()`` reports for every harness must resolve inside the project.
+
+    Regression test for the scoping guarantee stated in ``connect.py``'s module
+    docstring and enforced by ``_write_or_warn``'s guard: nothing this module
+    writes should ever be able to land outside the project root it was given
+    (``$HOME``, a harness's global config, ...). Runs every registered harness
+    (skipping ``Harness.none``, which has no wiring) against a fresh project
+    each time so one harness's files can't make another's assertions moot.
+    """
+    for harness in connect_module._HARNESS_HANDLERS:
+        root = _project(tmp_path / harness.value)
+        result = connect_module.connect(root, harness, strict=True)
+        for relative in result.written + result.skipped:
+            assert not Path(relative).is_absolute(), (harness, relative)
+            resolved = (root / relative).resolve()
+            assert resolved.is_relative_to(root.resolve()), (harness, relative, resolved)
+
+
+def test_generated_claude_settings_state_the_project_scoping_guarantee(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.claude_code, strict=False)
+
+    payload = json.loads((root / ".claude" / "settings.json").read_text())
+    assert "Project-scoped:" in payload["_comment"]
+
+
 # --- smairt.yaml harnesses: list -------------------------------------------------
 
 

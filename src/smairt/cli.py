@@ -94,6 +94,9 @@ def _require_project_root(command: str) -> Path:
     :func:`smairt.project.find_project_root`). Centralizing this one check
     here means each command below is one line shorter and the "not a SMAIRT
     project" message is worded identically everywhere.
+
+    ``hook`` deliberately does not use this helper — see
+    :data:`_HOOK_OUTSIDE_PROJECT_MESSAGE`.
     """
     root = project_module.find_project_root(Path.cwd())
     if root is None:
@@ -101,6 +104,30 @@ def _require_project_root(command: str) -> Path:
             command, "not a SMAIRT project (no smairt.yaml found in this or any parent directory)."
         )
     return root
+
+
+_HOOK_OUTSIDE_PROJECT_MESSAGE = (
+    "not inside a SMAIRT project (no smairt.yaml found in this or any parent "
+    "directory). If a harness ran this hook outside a project, a smairt entry "
+    "likely leaked into your global harness config — remove smairt entries "
+    "from e.g. ~/.claude/settings.json or ~/.cursor/hooks.json; generated "
+    "wiring belongs only inside a project."
+)
+"""The ``hook`` command's own "not a project" message — deliberately louder than
+:func:`_require_project_root`'s generic one.
+
+Every other command that hits this case was typed by a researcher sitting at a
+terminal in the wrong directory; the generic message is enough. ``hook`` is
+different: it is almost always invoked unattended by a harness's own hook
+runner, not by a human, so the most likely real cause is a stale or
+accidentally-global harness config (e.g. a smairt entry copied into
+``~/.claude/settings.json`` instead of the project-local file ``smairt
+connect`` generates) firing this hook in a directory that was never a SMAIRT
+project at all. Naming that cause and its fix here saves a confused researcher
+a debugging session. This still exits 1 (via :func:`_fail`), never 2 — a
+missing project is not a "findings exist, block the action" signal, and exit 2
+must stay reserved for that in harnesses where it means "block".
+"""
 
 
 def _prompt_harness(default: Harness = Harness.claude_code) -> Harness:
@@ -284,7 +311,9 @@ def hook(
     """
     if mode not in ("report", "gate"):
         _fail("hook", f"unknown mode {mode!r}. Choices: report, gate.")
-    root = _require_project_root("hook")
+    root = project_module.find_project_root(Path.cwd())
+    if root is None:
+        _fail("hook", _HOOK_OUTSIDE_PROJECT_MESSAGE)
     report = check_module.run_checks(root)
     if mode == "report":
         typer.echo(check_module.render_human(report))
