@@ -1,9 +1,11 @@
 # SMAIRT: Scientific Method with AI Research Toolkit
 
-SMAIRT V0.1 creates readable, hypothesis-driven scientific research workspaces
-for coding assistants. The installed `smairt` command is the supported project
+SMAIRT creates readable, hypothesis-driven scientific research workspaces for
+coding assistants, then keeps checking that the workspace stays disciplined as
+the work grows. The installed `smairt` command is the supported project
 creation path. It supports macOS, Linux, and Windows through WSL; native
-Windows support is deferred.
+Windows support is deferred. This is a preview-stage tool (pre-1.0): the
+command surface is small and stable within a release, but still growing.
 
 ## Install The Preview
 
@@ -12,8 +14,8 @@ macOS, Linux, or WSL with Python 3.11 through 3.13, clone the repository and
 install the current checkout as an isolated tool:
 
 ```bash
-git clone https://github.com/PNNL-CompBio/smairt-template.git
-cd smairt-template
+git clone https://github.com/sarodarte2/smairt-lab.git
+cd smairt-lab
 uv tool install .
 smairt --version
 ```
@@ -26,129 +28,164 @@ smairt --version
 ```
 
 Use `uv tool install --force .` or `pipx reinstall smairt` after updating your
-checkout. Native Windows is not supported in V0.1; use WSL instead.
+checkout. Native Windows is not supported; use WSL instead.
 
 ## Create A Project
 
-Run the guided wizard:
+Run `smairt new` with no flags for a short set of prompts (project name,
+researcher, one-line description, a numbered choice of harness, then y/n
+questions for HPC support, paper support, and Git):
 
 ```bash
 smairt new
 ```
 
-The wizard walks fourteen screens. You confirm one folder name and it derives
-the immutable project identifier from it, showing both. Optional capabilities
-are checkboxes, so answer `Do you expect to write a paper?` and `Do you expect
-to use an HPC?` independently, or leave `Default Workspace` checked. Every
-answer stays editable on the final review, where `Create project` sits below a
-divider so reviewing and committing are never one keystroke apart.
-
-Or use the complete noninteractive form for scripts and automation:
+Or pass everything up front, for scripts and automation:
 
 ```bash
-smairt new ./my_smairt_project \
-  --name "My SMAIRT Project" \
-  --slug my_smairt_project \
-  --description "A brief description of the research project." \
-  --researcher "Your Name" \
-  --domain "Not sure yet" \
-  --phase synthetic \
-  --assistant opencode \
-  --license MIT \
-  --accept-license \
-  --no-git
+smairt new \
+  --name "Signal Recovery" \
+  --researcher "A. Researcher" \
+  --description "Does denoising recover the true signal in low-SNR imaging data?" \
+  --harness claude-code \
+  --no-hpc \
+  --no-paper \
+  --git
 ```
 
-The starting phase records provenance and initializes the current phase. Every project
-contains all three phase workspaces:
+`--path` sets the parent directory (default: the current directory); the
+project folder itself is derived from `--name`. `--harness` records one
+coding assistant in `smairt.yaml` and wires it up immediately (see *Connect A
+Coding Assistant* below) — pass `--harness none` to skip wiring for now and
+connect one later. `--hpc` additionally generates `hpc/` with a commented
+SLURM template; `--paper` only leaves a note under STATUS.md's open
+questions that a paper overlay is a deferred, not-yet-built feature — neither
+flag is required, and each is independent of the other.
 
-| Phase | Meaning |
-| --- | --- |
-| `synthetic` | Work begins by testing assumptions with controlled data. |
-| `downloaded` | Work begins with public or benchmark data. |
-| `real` | Work begins directly with target data. |
+With no terminal attached, an omitted `--hpc/--paper/--git` question takes its
+documented default (no HPC, no paper note, Git initialized) instead of
+prompting, so a non-interactive `smairt new` needs only
+`--name`/`--researcher`/`--description`/`--harness`.
 
-Add `--paper` for a publication overlay linked to the standard scientific audit trail.
-Add `--hpc` for editable cluster configuration, SLURM templates, and HPC guidance.
-Both are independent and additive, and either can be enabled or disabled later.
-SMAIRT does not submit or manage cluster jobs.
+A pre-existing directory (an old analysis folder, a lab's existing repo) is
+adopted instead of created fresh:
 
-Add `--git` to initialize Git and stage generated files. SMAIRT never commits;
-if Git is unavailable, generation succeeds and reports that initialization was
-skipped.
+```bash
+smairt adopt --name "Legacy Imaging" --researcher "A. Researcher" \
+  --description "Pre-existing imaging pipeline, brought under SMAIRT." \
+  --harness none
+```
 
-## Manage A Project
+`smairt adopt` lays the same contract files (`smairt.yaml`, `STATUS.md`,
+`AGENTS.md`, `experiments/README.md`, `results/INDEX.md`) around whatever is
+already there and moves nothing; every top-level folder that already existed
+is recorded in `smairt.yaml` so `smairt check` doesn't warn about it.
 
-Run `smairt` inside a project for the Standard Mode dashboard. Set the local
-experience preference to `advanced` with `smairt settings` to expose Advanced
-Mode controls. The dashboard manages workspace utilities only; scientific work
-stays with the selected coding assistant.
+## Generated Workspace
 
-In a capable interactive terminal, Home, the dashboard, Project Settings, and
-guided project creation present framed keyboard screens that repaint in place:
-
-| Control | Action |
-| --- | --- |
-| Up/Down or `k`/`j` | Move the selection, wrapping at both ends |
-| PageUp/PageDown | Scroll one visible viewport without wrapping |
-| Enter | Choose the highlighted row |
-| Space | Check or uncheck the highlighted row, where a screen offers checkboxes |
-| Left or Escape | Return to the previous screen |
-| Ctrl-C | Cancel |
-
-Where several answers can hold at once, such as optional capabilities, the
-screen offers checkboxes with a visible `Next →` row. Space and Enter both
-toggle, so advancing is always a deliberate choice of `Next →`. `Default
-Workspace` is mutually exclusive with the capabilities by construction, so a
-contradictory selection cannot be reached.
-
-Long lists stay inside a bounded viewport with a scrollbar rather than printing
-every row, and a screen never exceeds the height of the terminal. Screens never
-take over the terminal with an alternate screen, so scrollback and copy stay
-yours. Styling uses only your terminal's own sixteen ANSI colors, and color is
-never the only signal.
-
-Redirected input, `TERM=dumb`, CI, tests, and `--no-motion` show the same
-options as a numbered listing. Every row carries a stable action token in
-brackets, and either the token or the number selects it:
+`smairt new` writes ordinary, readable files — this is the actual tree from a
+project created with the command above:
 
 ```text
-1. Launch assistant or open folder [assistant]
-2. Project Settings [settings]
+signal_recovery/
+├── smairt.yaml         # identity: name, researcher, harnesses, settings
+├── STATUS.md           # focus / next / open questions / decisions
+├── AGENTS.md           # the contract: shape, units, evidence rules
+├── CLAUDE.md           # 2-line bridge so Claude Code reads AGENTS.md
+├── .gitignore
+├── background/
+│   ├── README.md
+│   ├── question.md     # the project's one big, stable question
+│   ├── literature/
+│   └── prior_work/
+├── data/
+│   └── README.md       # one subfolder per dataset added later
+├── scripts/
+│   └── README.md       # shared, reusable code
+├── experiments/
+│   └── README.md       # the work, as units (see below)
+├── results/
+│   └── INDEX.md        # GENERATED — regenerate with `smairt index`
+└── .claude/settings.json   # written because --harness claude-code
 ```
 
-Tokens are the contract; numbers are a convenience that may be renumbered when
-a menu is regrouped, so scripts should prefer tokens.
+`AGENTS.md` is the one contract every coding assistant is pointed at — read
+by Codex, OpenCode, and pi natively, and by Claude Code through the `CLAUDE.md`
+bridge (always generated, regardless of which harness you chose). It documents
+the shape above, the two kinds of unit, the evidence and stakes rules, and
+ends with a `## Project learnings` section an assistant appends to over time.
 
-Stable scriptable commands include:
+The work itself lives under `experiments/` as **units**, and `smairt unit
+new` is the only supported way to create one — never `mkdir` by hand, because
+this command is also what assigns the number or date:
 
 ```bash
-smairt open /path/to/project
-smairt check /path/to/project --json
-smairt repair /path/to/project
-smairt paper enable /path/to/project
-smairt hpc disable /path/to/project
-smairt settings /path/to/project --experience advanced --no-motion
+smairt unit new stage --title "Align reads"
+smairt unit new question --title "Why is signal low" \
+  --hypothesis "Detector gain misconfigured"
 ```
 
-Project Check is read-only. It exits `0` when no structural or configuration
-issues are found and `1` otherwise. `smairt repair` previews only deterministic
-tool-owned repairs; pass `--select REPAIR --confirm` to apply a reviewed repair.
-The dashboard's Optional capabilities screen chooses Paper and HPC together. It
-previews exactly which files enabling would create, derived from the same
-rendering the write itself uses, and writes nothing until that preview is
-accepted. Paper and HPC deactivation never deletes project files. Motion is
-enabled only for interactive terminals and can be disabled locally with
-`--no-motion`; it is suppressed for tests, redirected output, JSON, and CI.
+A **stage** (`experiments/01_align-reads/`) is one step of the project's
+planned spine, numbered and only ever going up. A **question**
+(`experiments/2026-08-19_why-is-signal-low/`) is one dated, exploratory
+probe. Both get `logs/`, `out/`, and `figures/` subfolders and a README whose
+frontmatter `smairt check` validates. `--receipt --tool ... --tool-version
+... --command ...` records a unit as a receipt for an outside tool's run
+instead of your own code; `--ref path/to/existing` (repeatable) creates a
+thin, README-only unit pointing at code that already exists elsewhere in the
+tree — how `smairt adopt` gives pre-existing work a unit without moving it.
 
-Advanced Mode adds one `Advanced ▸` row that opens contract inspection, verbose
-Project Check, managed-asset regeneration, convention controls, and detected
-local tools, rather than lengthening the everyday menu.
+`results/INDEX.md` is the one file above that is derived, not a skeleton:
+`smairt index` (and `smairt status`, and unit creation) regenerate it from
+every unit's frontmatter, so it is never hand-edited.
 
-`smairt settings` updates approved metadata, collaborators, current phase,
-assistant, project conventions, or local dashboard preferences without
-changing the immutable project slug or folder. License changes show a preview,
-require `--confirm-license`, and refuse to replace modified `LICENSE` text.
+## Collaborating In Git
+
+`--git/--no-git` (default: asks at a terminal, initializes when there is
+none to ask) runs `git init` and stages the generated scaffold — `git add
+-A`, nothing more. SMAIRT never commits; that first commit is a deliberate
+act left to you. If the new project sits inside a Git repository that starts
+above it — a lab monorepo, a researcher's whole project tree already one
+repo — SMAIRT leaves Git alone rather than nesting a second repository
+inside the first; the scaffold shows up as untracked files in the outer repo
+for you to add when you're ready. If `git` isn't installed, project creation
+still succeeds and the command says so.
+
+The point of tracking `smairt.yaml`, `AGENTS.md`, the harness wiring under
+`.claude/`/`.codex/`/etc., and the CI workflow under `.github/workflows/` is
+that every collaborator who clones the project — human or coding assistant —
+gets the same contract and the same enforcement, not a private convention
+that lives only in one person's head or one session's context.
+
+## Where Data Lives
+
+Research data is usually too big for Git, or lives on a cluster's scratch
+disk a laptop can't reach. `data/<slug>/` holds a README per dataset; the
+data files themselves are git-ignored by default (see the generated
+`.gitignore`), so a collaborator who clones the project gets every README
+but none of the bytes.
+
+```bash
+smairt data new imaging_raw \
+  --hpc cluster.example.edu:/scratch/proj/raw --note "raw acquisition, untouched"
+smairt data locate imaging_raw --url https://example.org/dataset.zip
+smairt data list
+```
+
+```text
+imaging_raw (data/imaging_raw)
+  local data/imaging_raw/
+  hpc   cluster.example.edu:/scratch/proj/raw  # raw acquisition, untouched
+  url   https://example.org/dataset.zip
+```
+
+Each location is one of `local` (a path inside the project), `hpc`
+(`HOST:PATH`), or `url` (a download source); a dataset can have several. This
+is per-dataset frontmatter, not a central registry file — truth lives next
+to the dataset it describes, in the same folder a researcher is already
+looking in when they wonder where something is. `smairt check` nudges
+(advisory only, never blocking) toward recording a location for any
+`data/<x>/` folder that doesn't have one yet.
 
 ## Connect A Coding Assistant
 
@@ -168,7 +205,8 @@ gets the same discipline through its own best channel:
 Codex, OpenCode, and pi read `AGENTS.md` natively, so they need no bridge
 file. Every generated file names itself as generated, runs only read-only
 smairt commands, and can be deleted to disable the wiring; re-running
-`connect` never overwrites a file you have edited.
+`connect` never overwrites a file you have edited (it reports it as
+"unchanged" if identical, or warns and leaves it alone if it differs).
 
 The hooks call `smairt hook report`, which surfaces `smairt check` findings at
 session end and always exits 0. Setting `settings.strict_hooks: true` in
@@ -177,31 +215,33 @@ exits 2 — the block code these harnesses understand — so edits are refused
 while findings exist. `smairt connect --ci` writes a GitHub Actions workflow,
 the enforcement floor that binds every contributor regardless of local hooks.
 
-## Generated Workspace
+## Command Reference
 
-Each project is ordinary, readable files:
+Every command works from anywhere inside a project (it walks up to find
+`smairt.yaml`, the way Git finds `.git`), except `smairt new`, which creates
+one.
+
+| Command | What it does |
+| --- | --- |
+| `smairt new [OPTIONS]` | Create a new project: the day-one scaffold. |
+| `smairt adopt [OPTIONS]` | Lay the contract files around a pre-existing directory; moves nothing. |
+| `smairt check [--json]` | Audit the state contract (frontmatter, evidence pointers, drift). Exits 1 on any finding. |
+| `smairt status [--json]` | Orientation: focus, spine, live/closed questions, warnings, suggestions. |
+| `smairt connect <harness>` / `--ci` | Wire (or re-wire) one harness's hooks, or write the CI workflow. |
+| `smairt unit new stage\|question --title ...` | Create one unit under `experiments/` — the sole numbering/dating authority. |
+| `smairt data new\|locate\|list` | Record and list where each dataset's bytes physically live. |
+| `smairt index` | Regenerate `results/INDEX.md`. |
+| `smairt hook report\|gate` | Speaks a harness hook's exit-code protocol; called by generated wiring, not usually typed by hand. |
+
+`smairt check` groups findings as errors or warnings and prints a count of
+each, plus a separate advisory-only suggestions channel that never affects
+the exit code:
 
 ```text
-my_smairt_project/
-|-- smairt.yaml            # Tracked, versioned project contract
-|-- .smairt/               # Ignored local dashboard preferences
-|-- background/
-|-- hypotheses/
-|-- plans/
-|-- analysis/              # Plans, interpretations, and report template
-|-- experiments/           # All synthetic, downloaded, and real phase folders
-|-- data/                  # All phase folders; data files ignored by default
-|-- results/logs/          # Canonical raw run records
-|-- results/figures/
-|-- prompts/AI_CONTEXT.md  # Tool-neutral workflow guidance
-|-- paper/                 # Publication overlay present only with --paper
-`-- hpc/                   # Present only with --hpc
-```
+No errors or warnings.
 
-Start a coding-assistant session by reading `prompts/AI_CONTEXT.md`. Record raw
-command output in `results/logs/` before interpreting it in `analysis/`.
-Researchers remain responsible for scientific judgment, validation, and
-conclusions.
+0 error(s), 0 warning(s), 0 suggestion(s).
+```
 
 ## Legacy Cookiecutter
 
@@ -209,14 +249,15 @@ Cookiecutter implementations are retained under `legacy/cookiecutter/` only as
 unsupported historical references. They are not packaged, tested, or supported
 generation paths. Use `smairt new` for every new project and automation flow.
 
-## V0.1 Limits
+## Limits
 
-- Existing folders without `smairt.yaml` are not adopted or migrated.
 - Project Check diagnoses structure and configuration; it does not inspect
   scientific correctness or modify researcher-authored content.
-- Repairs and regeneration are limited to deterministic, tool-owned assets.
+- The Paper overlay named by `smairt new --paper` is not yet built; today the
+  flag only leaves a STATUS.md note.
 - HPC support supplies guidance and a template, not scheduler integration.
-- Native Windows support is deferred.
+  SMAIRT does not submit or manage cluster jobs.
+- Native Windows support is deferred; use WSL.
 
 ## Development
 
@@ -227,8 +268,8 @@ tracked by Git; syncing them wastes upload capacity and can corrupt a virtual
 environment when files are offloaded to the cloud:
 
 ```bash
-git clone https://github.com/PNNL-CompBio/smairt-template.git ~/Developer/smairt-template
-cd ~/Developer/smairt-template
+git clone https://github.com/sarodarte2/smairt-lab.git ~/Developer/smairt-lab
+cd ~/Developer/smairt-lab
 ```
 
 Install development dependencies and run all release gates locally:

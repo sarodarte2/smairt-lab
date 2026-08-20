@@ -160,6 +160,19 @@ def _prompt_harness(default: Harness = Harness.claude_code) -> Harness:
         typer.echo(f"'{answer}' isn't one of the choices above — try a number or an exact name.")
 
 
+def _confirm_or_default(prompt: str, *, default: bool) -> bool:
+    """Ask a yes/no question with :func:`typer.confirm`, but only at a real terminal.
+
+    A headless caller -- CI, an assistant harness driving `smairt new` (or
+    `smairt adopt`) non-interactively, or a `CliRunner` invocation in tests --
+    has no tty for `typer.confirm` to read from, and aborting there is worse
+    than silently taking the documented default. So this only prompts when
+    ``sys.stdin.isatty()``; otherwise it returns ``default`` unasked -- the
+    same value `typer.confirm` would have shown as its own default.
+    """
+    return typer.confirm(prompt, default=default) if sys.stdin.isatty() else default
+
+
 def _prompt_missing_identity(
     name: str | None,
     researcher: str | None,
@@ -213,21 +226,11 @@ def new(
         name, researcher, description, harness
     )
     if hpc is None:
-        hpc = typer.confirm("Expect to run on HPC/SLURM?", default=False)
+        hpc = _confirm_or_default("Expect to run on HPC/SLURM?", default=False)
     if paper is None:
-        paper = typer.confirm("Expect this project to support a paper?", default=False)
+        paper = _confirm_or_default("Expect this project to support a paper?", default=False)
     if git is None:
-        # Only ask at a real terminal. A headless caller (CI, an assistant
-        # harness driving `smairt new` non-interactively) has no tty for
-        # typer.confirm to read from, and collaboration is the point of
-        # restoring this question at all -- so the un-asked default matches
-        # the confirm's own default (True) rather than leaving the project
-        # ungit'd just because nobody was sitting at a terminal to answer.
-        git = (
-            typer.confirm("Initialize a Git repository?", default=True)
-            if sys.stdin.isatty()
-            else True
-        )
+        git = _confirm_or_default("Initialize a Git repository?", default=True)
 
     root = (path or Path.cwd()) / slugify(name, fallback="project")
     try:

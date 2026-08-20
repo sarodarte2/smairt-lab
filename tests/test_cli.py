@@ -233,6 +233,67 @@ def test_new_without_a_git_flag_defaults_to_git_in_a_non_interactive_session(
     assert (root / ".git").is_dir()
 
 
+def test_new_non_interactive_with_only_identity_flags_defaults_hpc_and_paper_off(
+    tmp_path: Path,
+) -> None:
+    # No --hpc/--no-hpc, --paper/--no-paper, or --git/--no-git at all. CliRunner
+    # never presents a real tty (even with input=""), so the "only ask at a
+    # real terminal" gate in cli.py's `new` should fall through to each
+    # confirm's own default (False for hpc/paper) instead of blocking on
+    # stdin that will never arrive -- this is the exact repro for the bug
+    # where an assistant harness or CI calling `smairt new` with just
+    # name/researcher/description/harness used to abort.
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Headless Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises the unset HPC/paper-support defaults end to end.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "headless_project"
+    assert not (root / "hpc").exists()
+    status = (root / "STATUS.md").read_text(encoding="utf-8")
+    assert "paper support" not in status.lower()
+
+
+def test_new_explicit_hpc_flag_still_creates_hpc_folder(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Hpc Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises an explicit --hpc flag end to end.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--hpc",
+            "--no-paper",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "hpc_project"
+    assert (root / "hpc").is_dir()
+
+
 def test_new_refuses_to_overwrite_an_existing_project(tmp_path: Path) -> None:
     flags = [
         "new",
