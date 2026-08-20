@@ -25,6 +25,7 @@ SMAIRT creates and manages readable, file-based scientific research workspaces.
 | Action token | The stable name identifying a menu action. Tokens are the addressing contract; displayed numbers are a renumberable convenience. |
 | Capability selection | A multi-selection of optional capabilities in which a deliberate none is mutually exclusive with any capability. |
 | Diff preview | The statement of exactly which changes an operation would make, derived from the operation itself and shown before anything is written. |
+| Analysis plan | The stated rule for what a question unit will measure and how its outcome will be judged, written before the run wherever possible. Revisions keep the original and append a marked amendment rather than replacing it. |
 | Prompted by | The relationship between a question unit and the earlier unit whose result raised it. Recorded on the *newer* unit as `prompted_by:`. A question earns its own unit — rather than staying a note inside the unit that raised it — once a new testable claim can be stated in one line. |
 
 ## Core Relationships
