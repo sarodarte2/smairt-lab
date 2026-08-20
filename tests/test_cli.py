@@ -10,6 +10,7 @@ covered by each command's own module's tests, e.g. test_project.py).
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -24,6 +25,8 @@ from smairt.cli import STUB_COMMANDS, app
 from smairt.project import Harness, create_project
 
 runner = CliRunner()
+
+GIT_AVAILABLE = shutil.which("git") is not None
 
 
 def installed_smairt() -> Path:
@@ -94,6 +97,140 @@ def test_new_non_interactive_with_complete_flags_prompts_for_nothing(
     # `smairt connect` (WP4), rather than deferring to a later work package.
     assert (root / ".claude" / "settings.json").is_file()
     assert ".claude/settings.json" in result.output
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_new_git_flag_initializes_a_repo_and_stages_but_does_not_commit(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Git Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises --git end to end.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "git_project"
+    assert (root / ".git").is_dir()
+    assert "staged the scaffold" in result.output
+    staged = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain"], capture_output=True, text=True
+    ).stdout
+    assert "A  smairt.yaml" in staged
+    log = subprocess.run(["git", "-C", str(root), "log"], capture_output=True, text=True)
+    assert log.returncode != 0  # nothing committed
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_new_git_flag_inside_an_existing_repo_skips_instead_of_nesting(
+    tmp_path: Path,
+) -> None:
+    # `tmp_path` itself is already a Git work tree (a lab monorepo, or a
+    # researcher's whole project tree being one repo) before `smairt new`
+    # creates the project folder underneath it -- `smairt new --git` must
+    # not silently nest a second repo inside the first.
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Nested Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises --git inside an existing repo.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "existing Git repository" in result.output
+    root = tmp_path / "nested_project"
+    assert not (root / ".git").exists()
+
+
+def test_new_no_git_flag_leaves_no_git_directory(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "No Git Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises --no-git end to end.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "no_git_project"
+    assert not (root / ".git").exists()
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_new_without_a_git_flag_defaults_to_git_in_a_non_interactive_session(
+    tmp_path: Path,
+) -> None:
+    # No --git/--no-git at all, and CliRunner never presents a real tty (even
+    # with input=""), so the "only ask at a real terminal" gate in cli.py's
+    # `new` should fall through to the confirm's own default (True) instead
+    # of blocking on stdin that will never arrive.
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Default Git Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises the unset --git default end to end.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "default_git_project"
+    assert (root / ".git").is_dir()
 
 
 def test_new_refuses_to_overwrite_an_existing_project(tmp_path: Path) -> None:

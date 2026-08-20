@@ -80,7 +80,6 @@ Judgment calls a reviewer should know about
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -91,6 +90,7 @@ import yaml
 
 from smairt import frontmatter
 from smairt import units as units_module
+from smairt.project import is_git_work_tree
 from smairt.units import UnitKind
 
 ERROR = "error"
@@ -260,7 +260,7 @@ def run_checks(project_root: Path) -> CheckReport:
     findings += _check_receipt_completeness(units)
 
     suggestions: list[Suggestion] = []
-    if _is_git_repo(project_root):
+    if is_git_work_tree(project_root):
         findings += _check_log_immutability(project_root, units)
     else:
         # No Git, no history to check for edits after the fact -- rule
@@ -512,26 +512,6 @@ def _check_receipt_completeness(units: list[_Unit]) -> list[Finding]:
 # --- rule 4: raw-log immutability --------------------------------------------
 
 
-def _is_git_repo(project_root: Path) -> bool:
-    """Is ``project_root`` inside a usable Git working tree?
-
-    Checks two things: is a ``git`` executable even on PATH, and does
-    ``git rev-parse`` succeed from this folder. Rule SMAIRT004 (log
-    immutability) needs Git history to work at all, so this gate decides
-    whether to run that rule or fall back to the SMAIRT101 advisory instead.
-    """
-    if shutil.which("git") is None:
-        return False
-    result = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "true"
-
-
 def _git_modified_paths(project_root: Path, rel_dir: Path) -> set[str]:
     """Paths under ``rel_dir`` that changed after the commit that first added them.
 
@@ -573,7 +553,8 @@ def _check_log_immutability(project_root: Path, units: list[_Unit]) -> list[Find
     editing one after the fact would let someone rewrite the evidence. This
     asks Git (via :func:`_git_modified_paths`) which log files have a
     modification recorded after their first commit, and flags every one
-    found. Only runs when :func:`_is_git_repo` says Git history is available.
+    found. Only runs when :func:`smairt.project.is_git_work_tree` says Git history
+    is available.
     """
     findings: list[Finding] = []
     for unit in units:

@@ -19,3 +19,10 @@ __pycache__/
 # *.bam
 # *.fastq.gz
 # *.h5ad
+
+# Data files live on disk or on an HPC, not in git — the per-dataset READMEs
+# record where. Delete these lines to track a small dataset directly.
+data/**
+!data/README.md
+!data/*/
+!data/*/README.md

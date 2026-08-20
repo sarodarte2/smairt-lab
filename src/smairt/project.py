@@ -21,10 +21,13 @@ place ``AGENTS.md`` is generated for both ``smairt new`` and ``smairt adopt``.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 import yaml
 
@@ -128,6 +131,131 @@ def create_project(
         write_once(root / "hpc" / "submit.slurm.example", _HPC_TEMPLATE)
 
     return root
+
+
+def is_git_work_tree(path: Path) -> bool:
+    """Is ``path`` inside a usable Git working tree — its own, or one that starts above it?
+
+    Public and shared: :func:`init_git` below uses it to decide whether
+    ``root`` already sits inside somebody else's repository (a lab
+    monorepo, a researcher's whole project tree already one repo, ...),
+    and :mod:`smairt.check` uses the identical check to decide whether rule
+    SMAIRT004 (log immutability) has any Git history to inspect at all. One
+    implementation, not two copies to keep in sync: checks that a ``git``
+    executable is even on PATH, then that ``git rev-parse
+    --is-inside-work-tree`` succeeds from ``path`` — the same test Git
+    itself uses, so it correctly says ``True`` even when ``path`` is nested
+    several directories under the repo's actual root, not just when
+    ``path`` IS that root.
+    """
+    if shutil.which("git") is None:
+        return False
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+@dataclass(frozen=True)
+class GitInitResult:
+    """What :func:`init_git` did, or deliberately did not do.
+
+    Three outcomes, not a single ``str | None`` — the old shape conflated
+    "did nothing because everything's already fine" with "did nothing
+    because something went wrong," which made the CLI unable to tell a
+    true "skipped on purpose" apart from a warning, or from success.
+
+    * ``"initialized"`` — a fresh repo was created at ``root`` and the
+      scaffold staged. ``message`` is empty; there's nothing more to say.
+    * ``"skipped"`` — deliberately did nothing. ``message`` explains why
+      (already a repo at ``root``, or ``root`` sits inside one that starts
+      above it — see :func:`init_git`).
+    * ``"warning"`` — git is missing or a command failed. ``message``
+      explains what. Project creation itself still succeeded either way;
+      this is advisory only.
+    """
+
+    outcome: Literal["initialized", "skipped", "warning"]
+    message: str
+
+
+def init_git(root: Path) -> GitInitResult:
+    """``git init`` + ``git add -A`` at ``root``: stage the scaffold, never commit it.
+
+    Restores a habit the pre-rebuild SMAIRT had and the v2 rebuild dropped:
+    collaboration is the point of the whole tool (``smairt.yaml``, ``AGENTS.md``,
+    the generated harness wiring, and the CI workflow only do their job once
+    every researcher who clones the project has the same files), so ``smairt
+    new`` should leave a project one ``git commit`` away from being shared
+    rather than silently ungit'd.
+
+    Committing is deliberately NOT done here — that is the researcher's own
+    act (a message, a moment of "this is worth recording"), not something a
+    scaffolding tool should do on their behalf.
+
+    Two distinct reasons this backs off instead of running ``git init``,
+    both reported as ``"skipped"`` (never a warning — both are the correct
+    outcome, not a failure):
+
+    * ``root/.git`` already exists — calling this against a project a
+      researcher already ``git init``'d themselves is always safe.
+    * ``root`` is nested inside a Git work tree that starts ABOVE it (a lab
+      monorepo, a researcher's whole project tree already one repo, ...).
+      Running plain ``git init`` here would silently create a SECOND repo
+      nested inside the first — invisible to the outer repo (an untracked
+      directory, not even a gitlink), so a collaborator cloning the outer
+      repo gets nothing and the researcher's commits live somewhere nobody
+      else knows to look. :func:`is_git_work_tree` is what detects this
+      case; a bare ``(root / ".git").exists()`` check only catches the
+      first bullet, not this one.
+
+    Deliberately does NOT fall back to ``git add``-ing the scaffold into
+    that OUTER repo either, in the second case: staging files into a
+    repository the researcher never told ``smairt new`` to touch is a
+    bigger surprise than leaving the new files untracked, and ``git
+    status`` in that outer repo will show them as untracked immediately
+    regardless — the researcher decides whether and how to bring them in.
+
+    Warn, don't fail: a missing ``git`` executable or a failing subprocess
+    call returns ``"warning"`` with a human-readable message instead of
+    raising, the same idiom :mod:`smairt.check` uses for a missing Git —
+    project creation itself must still succeed even when Git doesn't
+    cooperate.
+    """
+    if (root / ".git").exists():
+        return GitInitResult("skipped", "this project is already a Git repository.")
+    if is_git_work_tree(root):
+        return GitInitResult(
+            "skipped",
+            "this project sits inside an existing Git repository, so Git was left "
+            "alone rather than nesting a second one. The scaffold shows up as "
+            "untracked there — add and commit it when you're ready.",
+        )
+    try:
+        init_result = subprocess.run(
+            ["git", "init"], cwd=root, capture_output=True, text=True, check=False
+        )
+        if init_result.returncode != 0:
+            return GitInitResult(
+                "warning", f"git init failed: {(init_result.stderr or init_result.stdout).strip()}"
+            )
+        add_result = subprocess.run(
+            ["git", "add", "-A"], cwd=root, capture_output=True, text=True, check=False
+        )
+        if add_result.returncode != 0:
+            return GitInitResult(
+                "warning", f"git add failed: {(add_result.stderr or add_result.stdout).strip()}"
+            )
+    except FileNotFoundError:
+        return GitInitResult(
+            "warning",
+            "git is not installed; skipping git init (run it yourself once git is available).",
+        )
+    return GitInitResult("initialized", "")
 
 
 def render_identity(
@@ -329,6 +457,13 @@ __pycache__/
 # *.bam
 # *.fastq.gz
 # *.h5ad
+
+# Data files live on disk or on an HPC, not in git — the per-dataset READMEs
+# record where. Delete these lines to track a small dataset directly.
+data/**
+!data/README.md
+!data/*/
+!data/*/README.md
 """
 
 _BACKGROUND_README = """\
@@ -344,7 +479,8 @@ _DATA_README = """\
 
 One subfolder per dataset. Give each a README with a provenance header: where the
 data came from, when, and any transform already applied before it landed here. Raw
-and derived data both live here, described — not generated by this folder.
+and derived data both live here, described — not generated by this folder. Data file
+contents are git-ignored by default (see .gitignore); only the READMEs are tracked.
 """
 
 _SCRIPTS_README = """\

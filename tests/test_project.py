@@ -7,6 +7,8 @@ AGENTS.md/STATUS.md/smairt.yaml.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -14,9 +16,11 @@ import pytest
 import yaml
 
 from smairt.fsutil import PathExistsError
-from smairt.project import Harness, create_project
+from smairt.project import Harness, create_project, init_git
 
 GOLDEN_FIXTURE = Path(__file__).parent / "fixtures" / "golden"
+
+GIT_AVAILABLE = shutil.which("git") is not None
 
 TEN_ITEMS = {
     "smairt.yaml",
@@ -178,3 +182,97 @@ def _read_tree(root: Path) -> dict[str, str]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
+    )
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_init_git_creates_a_repo_and_stages_the_scaffold_without_committing(
+    tmp_path: Path,
+) -> None:
+    root = _create(tmp_path)
+
+    result = init_git(root)
+
+    assert result.outcome == "initialized"
+    assert (root / ".git").is_dir()
+    staged = _git(root, "status", "--porcelain").stdout
+    # Every scaffold file shows up staged ("A ", not "??" or "M").
+    assert "A  smairt.yaml" in staged
+    assert "A  AGENTS.md" in staged
+    # Nothing was committed -- `git log` has nothing to show yet.
+    log = _git(root, "log")
+    assert log.returncode != 0
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_init_git_on_an_already_initialized_repo_is_a_noop(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+    _git(root, "init")
+
+    result = init_git(root)
+
+    assert result.outcome == "skipped"
+    # The no-op path never runs `git add`, so nothing is staged yet.
+    staged = _git(root, "status", "--porcelain").stdout
+    assert "A  smairt.yaml" not in staged
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_init_git_inside_an_existing_work_tree_does_not_nest_a_second_repo(
+    tmp_path: Path,
+) -> None:
+    # Reproduces the "lab monorepo" / "whole project tree is one repo" case:
+    # the OUTER directory is already a Git work tree before `smairt new`
+    # ever creates the project folder underneath it, so the project folder
+    # itself never has its own `.git` at the time init_git runs.
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    _git(outer, "init")
+
+    root = outer / "project"
+    root.mkdir()
+    # A fresh project directory the day-one scaffold hasn't populated yet is
+    # enough to prove the point -- init_git only needs `root` to exist.
+
+    result = init_git(root)
+
+    assert result.outcome == "skipped"
+    assert "existing Git repository" in result.message
+    assert not (root / ".git").exists()
+    # The outer repo is untouched too -- nothing was staged into it.
+    outer_status = _git(outer, "status", "--porcelain").stdout
+    assert outer_status.strip() == ""
+
+
+@pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not installed")
+def test_gitignore_excludes_dataset_contents_but_tracks_dataset_readmes(
+    tmp_path: Path,
+) -> None:
+    """Verify the .gitignore patterns for real, not just by inspection.
+
+    ``data/**`` excludes everything under data/ (including subfolders),
+    then ``!data/README.md`` / ``!data/*/`` / ``!data/*/README.md``
+    re-include the top-level README, the dataset subfolders themselves
+    (git's rule: a file can't be re-included unless its parent directory
+    is re-included first), and each dataset's own README -- but not any
+    other file a dataset folder holds, like the raw data itself.
+    """
+    root = _create(tmp_path)
+    _git(root, "init")
+
+    dataset_dir = root / "data" / "some_dataset"
+    dataset_dir.mkdir(parents=True)
+    (dataset_dir / "README.md").write_text("# some_dataset\n\nProvenance goes here.\n")
+    (dataset_dir / "raw.csv").write_text("col_a,col_b\n1,2\n3,4\n")
+
+    _git(root, "add", "-A")
+
+    tracked = set(_git(root, "ls-files").stdout.splitlines())
+    assert "data/README.md" in tracked
+    assert "data/some_dataset/README.md" in tracked
+    assert "data/some_dataset/raw.csv" not in tracked

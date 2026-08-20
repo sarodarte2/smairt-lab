@@ -19,6 +19,7 @@ free to reword.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import NoReturn
 
@@ -200,6 +201,11 @@ def new(
     paper: bool | None = typer.Option(
         None, "--paper/--no-paper", help="Note paper support under STATUS.md open questions."
     ),
+    git: bool | None = typer.Option(
+        None,
+        "--git/--no-git",
+        help="Initialize a Git repository and stage the scaffold (never commits).",
+    ),
 ) -> None:
     """Create a new SMAIRT project: the ten-item day-one scaffold."""
     name, researcher, description, harness = _prompt_missing_identity(
@@ -209,6 +215,18 @@ def new(
         hpc = typer.confirm("Expect to run on HPC/SLURM?", default=False)
     if paper is None:
         paper = typer.confirm("Expect this project to support a paper?", default=False)
+    if git is None:
+        # Only ask at a real terminal. A headless caller (CI, an assistant
+        # harness driving `smairt new` non-interactively) has no tty for
+        # typer.confirm to read from, and collaboration is the point of
+        # restoring this question at all -- so the un-asked default matches
+        # the confirm's own default (True) rather than leaving the project
+        # ungit'd just because nobody was sitting at a terminal to answer.
+        git = (
+            typer.confirm("Initialize a Git repository?", default=True)
+            if sys.stdin.isatty()
+            else True
+        )
 
     root = (path or Path.cwd()) / slugify(name, fallback="project")
     try:
@@ -228,6 +246,22 @@ def new(
     if harness is not Harness.none:
         result = connect_module.connect(root, harness, strict=False)
         _report_connect(result)
+
+    # Git init/add runs LAST, after the harness wiring above, so everything
+    # `smairt new` generates -- smairt.yaml, AGENTS.md, and the harness's own
+    # hook config -- gets staged together, not just the day-one scaffold.
+    if git:
+        git_result = project_module.init_git(root)
+        if git_result.outcome == "initialized":
+            typer.echo("Initialized a Git repository and staged the scaffold (nothing committed).")
+        elif git_result.outcome == "skipped":
+            # Not a warning -- e.g. `root` is nested inside a Git repo that
+            # starts above it, so backing off (rather than nesting a second
+            # repo inside the first) IS the correct outcome. See
+            # smairt.project.init_git's docstring.
+            typer.echo(git_result.message)
+        else:
+            typer.echo(f"Warning: {git_result.message}", err=True)
 
 
 @app.command()
