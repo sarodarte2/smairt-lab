@@ -33,7 +33,7 @@ Researcher / assistant harness
    own module docstring; the short version:
    - `project.py` — `smairt new`, the day-one scaffold.
    - `units.py` — `smairt unit new`, creating one stage or question folder.
-   - `check.py` — `smairt check`, the eight rules that audit a project's state.
+   - `check.py` — `smairt check`, the eleven rules that audit a project's state.
    - `status.py` — `smairt status`, orientation (reuses `check.py`'s rules).
    - `connect.py` — `smairt connect`, wiring an assistant harness's hooks
      (`smairt hook`, the exit-code adapter those hooks call, lives in
@@ -67,7 +67,7 @@ read through `importlib.resources` rather than a path built from `__file__`.
 
 ## How a finding travels from a rule to the terminal
 
-`smairt check` has eight rules, each a `_check_*` (findings) or `_suggest_*`
+`smairt check` has eleven rules, each a `_check_*` (findings) or `_suggest_*`
 (advisory suggestions) function in `check.py`. `run_checks()` loads every unit
 once (`_load_units`) and hands that same list to each rule in turn, collecting
 everything into one `CheckReport`. `cli.py`'s `check` command calls

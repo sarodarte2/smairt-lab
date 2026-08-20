@@ -1,6 +1,6 @@
-"""Tests for ``smairt check`` (src/smairt/check.py): the eight state-contract rules.
+"""Tests for ``smairt check`` (src/smairt/check.py): the eleven state-contract rules.
 
-Each rule (SMAIRT001-007, plus the SMAIRT1xx advisory suggestions) gets its
+Each rule (SMAIRT001-010, plus the SMAIRT1xx advisory suggestions) gets its
 own section below, marked with a ``# ---`` header matching the rule's name in
 check.py. ``_project`` builds a throwaway project per test; ``_set_fields``
 edits one unit's frontmatter to provoke (or fix) a specific finding.
@@ -14,10 +14,13 @@ from pathlib import Path
 
 from smairt import frontmatter
 from smairt.check import (
+    RULE_ANALYSIS_PLAN,
     RULE_CLOSED_QUESTION,
     RULE_EVIDENCE_POINTERS,
     RULE_FRONTMATTER,
+    RULE_HYPOTHESIS_NONEMPTY,
     RULE_LOG_IMMUTABILITY,
+    RULE_PROMPTED_BY,
     RULE_RECEIPT_COMPLETENESS,
     RULE_STATUS_DRIFT,
     RULE_STRUCTURE_DRIFT,
@@ -86,7 +89,12 @@ def test_fresh_project_passes_clean(tmp_path: Path) -> None:
 def test_fresh_stage_and_question_pass_clean(tmp_path: Path) -> None:
     root = _project(tmp_path)
     create_stage(root, "Alignment", created=date.today())
-    create_question(root, "Does batch correction help?", created=date.today())
+    create_question(
+        root,
+        "Does batch correction help?",
+        hypothesis="Batch correction removes the batch effect without erasing biology.",
+        created=date.today(),
+    )
 
     report = run_checks(root)
 
@@ -165,7 +173,12 @@ def test_rule2_open_question_with_unwritten_log_is_not_flagged(tmp_path: Path) -
     # smairt unit new question pre-fills log: with the filename the probe is
     # expected to write; before it has run, that must not be a finding.
     root = _project(tmp_path)
-    create_question(root, "Does batch correction help?", created=date.today())
+    create_question(
+        root,
+        "Does batch correction help?",
+        hypothesis="Batch correction removes the batch effect without erasing biology.",
+        created=date.today(),
+    )
 
     report = run_checks(root)
 
@@ -215,6 +228,7 @@ def test_rule3_receipt_missing_log_is_flagged(tmp_path: Path) -> None:
     create_question(
         root,
         "Run nf-core rnaseq",
+        hypothesis="nf-core/rnaseq reproduces the in-house pipeline's DE calls.",
         receipt=True,
         tool="nf-core/rnaseq",
         tool_version="3.14",
@@ -232,6 +246,7 @@ def test_rule3_receipt_missing_tool_version_is_flagged(tmp_path: Path) -> None:
     question = create_question(
         root,
         "Run nf-core rnaseq",
+        hypothesis="nf-core/rnaseq reproduces the in-house pipeline's DE calls.",
         receipt=True,
         tool="nf-core/rnaseq",
         tool_version="3.14",
@@ -254,7 +269,9 @@ def test_rule3_receipt_missing_tool_version_is_flagged(tmp_path: Path) -> None:
 
 def test_rule4_log_modified_after_commit_is_flagged(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    question = create_question(root, "Probe", created=date.today())
+    question = create_question(
+        root, "Probe", hypothesis="The probe reproduces the known signal.", created=date.today()
+    )
     fields, _body = frontmatter.read(question / "README.md")
     log_path = question / str(fields["log"])
     log_path.write_text("first line\n", encoding="utf-8")
@@ -393,10 +410,15 @@ def test_rule6_folder_added_after_adoption_is_still_flagged(tmp_path: Path) -> N
 
 def test_rule7_closed_question_without_verdict_is_flagged(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    question = create_question(root, "Does X help?", created=date.today())
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
     fields, body = frontmatter.read(question / "README.md")
     log_rel = str(fields["log"])
     (question / log_rel).write_text("log\n", encoding="utf-8")
+    body = body.replace(
+        "## Analysis plan\n\n", "## Analysis plan\n\nCompare X against control; z-test.\n\n"
+    )
     fields["status"] = "supported"
     fields["script"] = "out"  # existing pointer, so rule 2 stays silent
     (question / "README.md").write_text(frontmatter.render(fields) + body, encoding="utf-8")
@@ -408,10 +430,15 @@ def test_rule7_closed_question_without_verdict_is_flagged(tmp_path: Path) -> Non
 
 def test_rule7_closed_question_with_verdict_is_not_flagged(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    question = create_question(root, "Does X help?", created=date.today())
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
     fields, body = frontmatter.read(question / "README.md")
     log_rel = str(fields["log"])
     (question / log_rel).write_text("log\n", encoding="utf-8")
+    body = body.replace(
+        "## Analysis plan\n\n", "## Analysis plan\n\nCompare X against control; z-test.\n\n"
+    )
     fields["status"] = "supported"
     fields["script"] = "out"
     fields["verdict"] = "Confirmed: X helps."
@@ -422,7 +449,193 @@ def test_rule7_closed_question_with_verdict_is_not_flagged(tmp_path: Path) -> No
     assert report.findings == ()
 
 
-# --- rule 8: growth suggestions (advisory channel) --------------------------------
+# --- rule 8: prompted_by resolves --------------------------------------------------
+
+
+def test_rule8_dangling_prompted_by_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    question = create_question(
+        root,
+        "Why is signal low",
+        hypothesis="Signal is low because of a batch effect.",
+        created=date.today(),
+    )
+    _set_fields(question / "README.md", prompted_by="2020-01-01_does-not-exist")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY}
+    finding = report.findings[0]
+    assert "2020-01-01_does-not-exist" in finding.message
+
+
+def test_rule8_prompted_by_resolving_to_a_real_unit_is_not_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    origin = create_question(
+        root, "Why is signal low", hypothesis="Signal is low because of a batch effect."
+    )
+    create_question(
+        root,
+        "Does batch correction fix the low signal",
+        hypothesis="Batch correction restores the expected signal level.",
+        prompted_by=origin.name,
+        created=date.today(),
+    )
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
+def test_rule8_prompted_by_pointing_at_a_folder_with_no_readme_is_flagged(tmp_path: Path) -> None:
+    # A bare folder under experiments/ (no README.md of its own) isn't "a real
+    # unit" -- the same standard rule SMAIRT002 already holds paths: to.
+    root = _project(tmp_path)
+    (root / "experiments" / "2026-01-01_not-a-real-unit").mkdir(parents=True)
+    question = create_question(
+        root,
+        "Follow-up",
+        hypothesis="The follow-up claim holds.",
+        created=date.today(),
+    )
+    _set_fields(question / "README.md", prompted_by="2026-01-01_not-a-real-unit")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY}
+
+
+def test_rule8_unset_prompted_by_is_never_flagged(tmp_path: Path) -> None:
+    # Nothing ever requires prompted_by: -- an absent field must stay silent.
+    root = _project(tmp_path)
+    create_question(root, "Plain question", hypothesis="Plain claim.", created=date.today())
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_PROMPTED_BY for f in report.findings)
+
+
+# --- rule 9: hypothesis is non-empty ------------------------------------------------
+
+
+def test_rule9_empty_hypothesis_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    create_question(root, "Does X help?", created=date.today())
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_HYPOTHESIS_NONEMPTY}
+
+
+def test_rule9_empty_hypothesis_is_flagged_even_while_open(tmp_path: Path) -> None:
+    # The rule is not gated on status -- catching a blank claim only at close
+    # would let it get written after the result is already known.
+    root = _project(tmp_path)
+    question = create_question(root, "Does X help?", created=date.today())
+    fields, _body = frontmatter.read(question / "README.md")
+    assert fields["status"] == "open"
+
+    report = run_checks(root)
+
+    assert RULE_HYPOTHESIS_NONEMPTY in {f.id for f in report.findings}
+
+
+def test_rule9_reference_question_is_exempt_from_the_hypothesis_check(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "old_analysis").mkdir(parents=True)
+
+    create_question(root, "Old DE run", ref_paths=["data/old_analysis"], created=date.today())
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_HYPOTHESIS_NONEMPTY for f in report.findings)
+
+
+def test_rule9_missing_hypothesis_key_does_not_double_report_with_rule1(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
+    fields, body = frontmatter.read(question / "README.md")
+    del fields["hypothesis"]
+    (question / "README.md").write_text(frontmatter.render(fields) + body, encoding="utf-8")
+
+    report = run_checks(root)
+
+    # SMAIRT001 (missing required field) fires; SMAIRT009 stays silent rather
+    # than reporting the same defect a second time.
+    assert {f.id for f in report.findings} == {RULE_FRONTMATTER}
+
+
+# --- rule 10: closed question needs a non-empty Analysis plan ----------------------
+
+
+def test_rule10_closed_question_with_empty_analysis_plan_is_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
+    fields, body = frontmatter.read(question / "README.md")
+    log_rel = str(fields["log"])
+    (question / log_rel).write_text("log\n", encoding="utf-8")
+    fields["status"] = "supported"
+    fields["script"] = "out"
+    fields["verdict"] = "Confirmed: X helps."
+    (question / "README.md").write_text(frontmatter.render(fields) + body, encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_ANALYSIS_PLAN}
+
+
+def test_rule10_closed_question_with_analysis_plan_filled_is_not_flagged(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
+    fields, body = frontmatter.read(question / "README.md")
+    log_rel = str(fields["log"])
+    (question / log_rel).write_text("log\n", encoding="utf-8")
+    body = body.replace(
+        "## Analysis plan\n\n", "## Analysis plan\n\nCompare X against control; z-test.\n\n"
+    )
+    fields["status"] = "supported"
+    fields["script"] = "out"
+    fields["verdict"] = "Confirmed: X helps."
+    (question / "README.md").write_text(frontmatter.render(fields) + body, encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
+def test_rule10_open_question_with_empty_analysis_plan_is_not_flagged(tmp_path: Path) -> None:
+    # Required at close, not at creation -- a hard gate at creation would
+    # push researchers back toward mkdir-ing units by hand.
+    root = _project(tmp_path)
+    create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_ANALYSIS_PLAN for f in report.findings)
+
+
+def test_rule10_reference_question_is_exempt_even_when_closed(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "old_analysis").mkdir(parents=True)
+    question = create_question(
+        root, "Old DE run", ref_paths=["data/old_analysis"], created=date.today()
+    )
+    _set_fields(question / "README.md", status="supported", verdict="Confirmed by the old run.")
+
+    report = run_checks(root)
+
+    assert not any(f.id == RULE_ANALYSIS_PLAN for f in report.findings)
+
+
+# --- rule 11: growth suggestions (advisory channel) --------------------------------
 
 
 def test_rule8_suggests_hpc_when_slurm_content_found_without_hpc_folder(tmp_path: Path) -> None:
@@ -442,9 +655,24 @@ def test_rule8_suggests_grouping_when_three_questions_share_a_leading_word(
     tmp_path: Path,
 ) -> None:
     root = _project(tmp_path)
-    create_question(root, "Replicate3 pca check", created=date(2026, 1, 1))
-    create_question(root, "Replicate3 clustering check", created=date(2026, 1, 2))
-    create_question(root, "Replicate3 outlier check", created=date(2026, 1, 3))
+    create_question(
+        root,
+        "Replicate3 pca check",
+        hypothesis="Replicate 3 separates from the others on PCA.",
+        created=date(2026, 1, 1),
+    )
+    create_question(
+        root,
+        "Replicate3 clustering check",
+        hypothesis="Replicate 3 forms its own cluster.",
+        created=date(2026, 1, 2),
+    )
+    create_question(
+        root,
+        "Replicate3 outlier check",
+        hypothesis="Replicate 3 is a statistical outlier by distance from centroid.",
+        created=date(2026, 1, 3),
+    )
 
     report = run_checks(root)
 

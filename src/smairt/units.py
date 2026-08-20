@@ -21,6 +21,13 @@ already exists outside ``experiments/``) — is not a separate kind; it's what
 you get when ``ref_paths`` is passed to either creator function below (used
 by ``smairt adopt`` for pre-existing projects).
 
+A question can also carry ``prompted_by:`` — an OPTIONAL field, set only when
+``--from <origin-unit-folder>`` is passed to :func:`create_question`, naming
+the unit whose result raised this one as a new, separately testable question
+(spec ticket 01, "sidequest lineage"). It is never required and is not part
+of :data:`QUESTION_REQUIRED_FIELDS`; :mod:`smairt.check` flags it only when
+it is present and dangling.
+
 This module also defines the schemas (:data:`STAGE_REQUIRED_FIELDS`,
 :data:`QUESTION_REQUIRED_FIELDS`, and the allowed ``status:`` values) that
 :mod:`smairt.check` validates every unit's frontmatter against — so field
@@ -62,6 +69,7 @@ _UNIT_SUBFOLDERS = ("logs", "out", "figures")
 _QUESTION_BODY_SECTIONS = (
     "## Why ask this",
     "## What we expected",
+    "## Analysis plan",
     "## What happened",
     "## What it means",
     "## Next",
@@ -214,6 +222,7 @@ def create_question(
     title: str,
     *,
     hypothesis: str | None = None,
+    prompted_by: str | None = None,
     receipt: bool = False,
     tool: str | None = None,
     tool_version: str | None = None,
@@ -228,12 +237,29 @@ def create_question(
     thin reference unit — README only, no logs/out/figures/ — whose
     frontmatter carries ``paths:`` (the referenced pre-existing paths,
     relative to the project root).
+
+    ``prompted_by`` (``--from`` on the CLI) names the folder of the unit
+    whose result raised this question — the sidequest-lineage link (spec
+    ticket 01). It is validated here, at creation, the same way ``--tool``
+    is validated by :func:`_receipt_fields`: a ``prompted_by`` naming a
+    folder with no README.md under ``experiments/`` raises ``ValueError``
+    immediately rather than being written and only caught later by
+    ``smairt check``. The field is never required — pass nothing and no
+    ``prompted_by:`` line is written at all.
     """
     today = created or date.today()
     slug = slugify(title, fallback="question", sep="-")
     unit_dir = project_root / "experiments" / f"{today.isoformat()}_{slug}"
     if unit_dir.exists():
         raise PathExistsError(f"refusing to overwrite existing unit: {unit_dir}")
+
+    if prompted_by is not None:
+        origin_readme = project_root / "experiments" / prompted_by / "README.md"
+        if not origin_readme.is_file():
+            raise ValueError(
+                f"--from target does not exist: no unit at experiments/{prompted_by} "
+                "(check the folder name, or create that unit first)"
+            )
 
     is_reference = bool(ref_paths)
     fields: dict[str, object] = {
@@ -242,10 +268,12 @@ def create_question(
         "status": "open",
         "date": today,
         "hypothesis": hypothesis or "",
-        "script": "",
-        "log": "" if is_reference else f"logs/{slug}.log",
-        "verdict": "",
     }
+    if prompted_by is not None:
+        fields["prompted_by"] = prompted_by
+    fields["script"] = ""
+    fields["log"] = "" if is_reference else f"logs/{slug}.log"
+    fields["verdict"] = ""
     if is_reference:
         fields["paths"] = list(ref_paths)  # type: ignore[arg-type]
     if receipt:

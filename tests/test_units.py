@@ -109,11 +109,15 @@ def test_create_question_readme_has_required_schema_fields_and_legal_status(
     for heading in (
         "## Why ask this",
         "## What we expected",
+        "## Analysis plan",
         "## What happened",
         "## What it means",
         "## Next",
     ):
         assert heading in body
+    # The plan sits with the other before-the-run sections, ahead of the
+    # after-the-run ones -- it describes how the result will be judged.
+    assert body.index("## Analysis plan") < body.index("## What happened")
 
 
 def test_create_question_without_hypothesis_leaves_it_empty_but_present(tmp_path: Path) -> None:
@@ -158,6 +162,93 @@ def test_create_question_refuses_a_same_day_same_title_duplicate(tmp_path: Path)
 
     with pytest.raises(PathExistsError):
         create_question(root, "Alignment check", created=date(2026, 1, 5))
+
+
+def test_create_question_with_from_sets_the_prompted_by_field(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    origin = create_question(root, "Why is signal low", created=date(2026, 1, 1))
+
+    prompted = create_question(
+        root,
+        "Does batch correction fix the low signal",
+        prompted_by=origin.name,
+        created=date(2026, 1, 2),
+    )
+    fields, _body = frontmatter.read(prompted / "README.md")
+
+    assert fields["prompted_by"] == origin.name
+
+
+def test_create_question_without_from_has_no_prompted_by_field(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    question = create_question(root, "Plain question", created=date(2026, 1, 1))
+    fields, _body = frontmatter.read(question / "README.md")
+
+    assert "prompted_by" not in fields
+
+
+def test_create_question_from_a_nonexistent_origin_is_rejected(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    with pytest.raises(ValueError, match="--from target does not exist"):
+        create_question(
+            root,
+            "Does batch correction fix the low signal",
+            prompted_by="2020-01-01_never-created",
+            created=date(2026, 1, 2),
+        )
+    # The failed validation must not have created the folder anyway.
+    assert not (
+        root / "experiments" / "2026-01-02_does-batch-correction-fix-the-low-signal"
+    ).exists()
+
+
+def test_cli_unit_new_question_with_from(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    origin = create_question(root, "Why is signal low", created=date(2026, 1, 1))
+
+    result = runner.invoke(
+        app,
+        [
+            "unit",
+            "new",
+            "question",
+            "--title",
+            "Does batch correction fix it",
+            "--from",
+            origin.name,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    unit_dir = next((root / "experiments").glob("*does-batch-correction-fix-it*"))
+    fields, _body = frontmatter.read(unit_dir / "README.md")
+    assert fields["prompted_by"] == origin.name
+
+
+def test_cli_unit_new_question_with_a_dangling_from_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(
+        app,
+        [
+            "unit",
+            "new",
+            "question",
+            "--title",
+            "Does batch correction fix it",
+            "--from",
+            "2020-01-01_never-created",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--from target does not exist" in result.output
 
 
 def test_cli_unit_new_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

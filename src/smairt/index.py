@@ -5,6 +5,12 @@ own logs/figures. This module walks all of them and builds a single table
 (one row per unit) so a researcher — or another tool — can see the whole
 project's evidence at a glance without opening every unit's README.
 
+A question unit carrying ``prompted_by:`` (spec ticket 01, "sidequest
+lineage") gets its row nested under its origin's row, as indentation, rather
+than a new column — this is the one place lineage becomes visible without
+turning the index into a graph a researcher can't read at a glance. See
+:func:`_ordered_for_index`.
+
 INDEX.md is *derived*, not hand-written: it is always safe to regenerate,
 and nothing in this file ever reads back what was there before. Called both
 directly (``smairt index``) and as a side effect of ``smairt new``,
@@ -23,6 +29,9 @@ _HEADER = (
     "# Results index\n\n"
     "Every unit's evidence, in one map. Regenerate with `smairt index`.\n\n"
 )
+NBSP = "\u00a0"
+"""One non-breaking space, the unit of nesting indentation in the rendered table."""
+
 _TABLE_HEADER = (
     "| Unit | Kind | Status | Title | Logs | Figures |\n| --- | --- | --- | --- | --- | --- |\n"
 )
@@ -30,7 +39,15 @@ _TABLE_HEADER = (
 
 @dataclass(frozen=True)
 class UnitRecord:
-    """One row of the results index: a unit and the evidence it points at."""
+    """One row of the results index: a unit and the evidence it points at.
+
+    ``prompted_by`` carries the raw ``prompted_by:`` frontmatter value
+    verbatim (empty string if the unit doesn't have one) — it is not
+    validated here. A value that doesn't resolve to a real unit is
+    `smairt check`'s job (rule SMAIRT008) to report; this module's job is
+    only to never crash on one, so :func:`_ordered_for_index` renders a
+    dangling ``prompted_by`` at the top level instead of dropping the row.
+    """
 
     path: str
     kind: str
@@ -38,6 +55,7 @@ class UnitRecord:
     title: str
     logs: tuple[str, ...]
     figures: tuple[str, ...]
+    prompted_by: str = ""
 
 
 def scan_units(project_root: Path) -> list[UnitRecord]:
@@ -65,6 +83,7 @@ def scan_units(project_root: Path) -> list[UnitRecord]:
                 title=str(fields.get("title", "")),
                 logs=_listed_files(entry / "logs"),
                 figures=_listed_files(entry / "figures"),
+                prompted_by=str(fields.get("prompted_by", "")).strip(),
             )
         )
     return records
@@ -85,19 +104,95 @@ def _listed_files(folder: Path) -> tuple[str, ...]:
     )
 
 
+def _unit_name(record: UnitRecord) -> str:
+    """The bare folder name a ``prompted_by:`` value refers to, e.g. ``"01_alignment"``."""
+    return record.path.rsplit("/", 1)[-1]
+
+
+def _ordered_for_index(records: list[UnitRecord]) -> list[tuple[UnitRecord, int]]:
+    """Order records depth-first so a prompted question's row follows its origin's, indented.
+
+    Returns ``(record, depth)`` pairs in render order; ``depth`` is how many
+    ``prompted_by:`` links deep this row sits (0 for a unit with none, or
+    whose ``prompted_by:`` doesn't resolve — see below).
+
+    A record's ``prompted_by:`` only nests it when the value resolves to
+    ANOTHER record actually in this scan (self-references are also refused,
+    since nesting a unit under itself is nonsensical) — a value that names
+    nothing real is exactly what `smairt check`'s rule SMAIRT008 reports as
+    an error, and this function's only job on that same input is to still
+    render the row, at the top level, rather than crash or silently drop it.
+
+    A cycle of ``prompted_by:`` pointers (only reachable by hand-editing
+    frontmatter; nothing SMAIRT itself writes can create one) would let a
+    naive walk recurse forever. The ``visited`` set below prevents that: once
+    a record has been placed once, a later attempt to place it again
+    (whether from a second parent or from the cycle-closing walk two loops
+    down) is a no-op, and a final pass over every record catches any record
+    a cycle kept out of the first walk entirely, rendering it at the top
+    level rather than dropping it from the index.
+    """
+    by_name = {_unit_name(record): record for record in records}
+    children: dict[str, list[UnitRecord]] = {}
+    top_level: list[UnitRecord] = []
+    for record in records:
+        name = _unit_name(record)
+        origin = record.prompted_by
+        if origin and origin in by_name and origin != name:
+            children.setdefault(origin, []).append(record)
+        else:
+            top_level.append(record)
+
+    ordered: list[tuple[UnitRecord, int]] = []
+    visited: set[str] = set()
+
+    def visit(record: UnitRecord, depth: int) -> None:
+        name = _unit_name(record)
+        if name in visited:
+            return
+        visited.add(name)
+        ordered.append((record, depth))
+        for child in children.get(name, []):
+            visit(child, depth + 1)
+
+    for record in top_level:
+        visit(record, 0)
+    # Catches any record a prompted_by: cycle kept unreached above.
+    for record in records:
+        visit(record, 0)
+
+    return ordered
+
+
 def render_index(records: list[UnitRecord]) -> str:
-    """Render ``results/INDEX.md`` content from scanned unit records."""
-    rows = [
-        "| [{path}]({path}/README.md) | {kind} | {status} | {title} | {logs} | {figures} |".format(
-            path=record.path,
-            kind=record.kind,
-            status=record.status,
-            title=record.title,
-            logs=", ".join(record.logs) or "-",
-            figures=", ".join(record.figures) or "-",
+    """Render ``results/INDEX.md`` content from scanned unit records.
+
+    Rows are ordered by :func:`_ordered_for_index` (a prompted question
+    nests under its origin) rather than the scan's plain folder-name order,
+    and a nested row's Title cell is prefixed to show that nesting visually
+    -- a new column would give lineage the same weight as every other fact
+    this table records, when it is really a side note about ONE of them.
+    The prefix indents with :data:`NBSP` rather than the ``&nbsp;`` entity so
+    the nesting reads as nesting in a plain-text view of the file too.
+    """
+    rows = []
+    for record, depth in _ordered_for_index(records):
+        # A real U+00A0 non-breaking space, not the "&nbsp;" HTML entity: both
+        # survive a Markdown renderer's whitespace collapsing, but only this one
+        # still looks like indentation to someone reading INDEX.md as a plain
+        # file in a terminal or editor -- which is most of the point of keeping
+        # this project's records as readable text.
+        title = f"{NBSP * 2 * depth}↳ {record.title}" if depth else record.title
+        rows.append(
+            "| [{path}]({path}/README.md) | {kind} | {status} | {title} | {logs} | {figures} |".format(
+                path=record.path,
+                kind=record.kind,
+                status=record.status,
+                title=title,
+                logs=", ".join(record.logs) or "-",
+                figures=", ".join(record.figures) or "-",
+            )
         )
-        for record in records
-    ]
     table_body = "\n".join(rows) + ("\n" if rows else "")
     return _HEADER + _TABLE_HEADER + table_body
 

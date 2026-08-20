@@ -1,7 +1,7 @@
 # Implement the scientific conventions
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 01, 02
 
 ## Question
@@ -46,3 +46,46 @@ Definition of done: `uv run pytest`, `uv run ruff check .`,
 `uv run mypy src tests` green; a freshly created project still passes
 `smairt check` with zero findings (the WP1 acceptance criterion); the README /
 `docs/REFERENCE.md` describe the new conventions.
+
+## Answer
+
+Implemented. Three new check rules (`SMAIRT008` dangling `prompted_by:`,
+`SMAIRT009` empty `hypothesis:`, `SMAIRT010` empty `## Analysis plan` on a closed
+question), a `--from` flag validated at creation, `## Analysis plan` in the
+question body template, `INDEX.md` nesting, updated `_AGENTS_TEMPLATE` and both
+question skills, regenerated golden fixture, and ADR 0005. 248 tests; ruff, mypy
+strict, and pytest all clean.
+
+**Verified by the main session against a throwaway project**, not taken on report:
+three-level `--from` nesting renders correctly; a dangling `--from` fails at
+creation naming the fix; `SMAIRT009` and `SMAIRT010` both fire on a closed
+question and clear once filled; a fresh project still passes with zero findings.
+
+### Two corrections applied during review
+
+1. **`INDEX.md` used `&nbsp;` HTML entities for indentation.** They render on
+   GitHub but a scientist reading `INDEX.md` in a terminal or editor sees literal
+   `&nbsp;&nbsp;↳ Title`. Replaced with a real U+00A0 non-breaking space, which
+   survives Markdown whitespace-collapsing *and* looks like indentation in plain
+   text — the point of keeping these records as readable files.
+2. **`AGENTS.md` never mentioned `prompted_by:` or `--from`.** The spec listed
+   three additions and all three landed, but `check` deliberately never nags for
+   the link and `AGENTS.md` is the only file every assistant always reads — so
+   the feature was invisible outside one skill. Added the mechanism and the
+   hypothesis-test boundary to the Units section. Template is 97 lines, still
+   under its own ~120 cap.
+
+### The agent's own judgment call, accepted
+
+`SMAIRT009` and `SMAIRT010` both exempt **reference units** (`paths:` present).
+Ticket 02 stated this only for the plan rule; without the same exemption on the
+hypothesis rule, every unit created by `smairt unit new question --ref ...` —
+i.e. everything `smairt adopt` produces — would permanently fail check. Correct
+call, documented in `check.py`'s "Judgment calls" section.
+
+`SMAIRT009` fires on **any** status, not just closed. This is right and is the
+stricter default: waiting until close to demand the claim would let the claim be
+written after the result is known, which is the exact retrofitting
+hypothesis-before-run exists to prevent. It did break several previously-passing
+tests that created questions without `--hypothesis`; those were fixed, not
+weakened.

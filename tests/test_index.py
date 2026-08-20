@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from smairt import frontmatter
 from smairt.cli import app
-from smairt.index import scan_units, write_index
+from smairt.index import render_index, scan_units, write_index
 from smairt.project import Harness, create_project
 from smairt.units import create_question, create_stage
 
@@ -103,6 +104,85 @@ def test_scan_units_handles_a_reference_unit_with_no_logs_folder(tmp_path: Path)
 
     # Regenerating the index must not crash for a unit with no logs/figures/.
     write_index(root)
+
+
+def test_scan_units_captures_the_prompted_by_field(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    origin = create_question(root, "Why is signal low", created=date(2026, 1, 1))
+    create_question(
+        root,
+        "Does batch correction fix it",
+        prompted_by=origin.name,
+        created=date(2026, 1, 2),
+    )
+
+    records = {record.path.rsplit("/", 1)[-1]: record for record in scan_units(root)}
+
+    assert records[origin.name].prompted_by == ""
+    assert records["2026-01-02_does-batch-correction-fix-it"].prompted_by == origin.name
+
+
+def test_render_index_nests_a_prompted_question_under_its_origin(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    origin = create_question(root, "Why is signal low", created=date(2026, 1, 1))
+    create_question(
+        root,
+        "Does batch correction fix it",
+        prompted_by=origin.name,
+        created=date(2026, 1, 2),
+    )
+
+    content = render_index(scan_units(root))
+    lines = [
+        line for line in content.splitlines() if line.startswith("|") and "experiments/" in line
+    ]
+
+    assert len(lines) == 2
+    # The origin's row comes first, un-indented; the prompted question's row
+    # follows it directly, carrying the nesting marker in its Title cell.
+    assert origin.name in lines[0]
+    assert "↳" not in lines[0]
+    assert "does-batch-correction-fix-it" in lines[1]
+    assert "↳" in lines[1]
+
+
+def test_render_index_nests_multiple_levels_of_prompted_by(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    grandparent = create_question(root, "Why is signal low", created=date(2026, 1, 1))
+    parent = create_question(
+        root, "Batch correction check", prompted_by=grandparent.name, created=date(2026, 1, 2)
+    )
+    create_question(
+        root, "Does the fix hold on replicate 2", prompted_by=parent.name, created=date(2026, 1, 3)
+    )
+
+    content = render_index(scan_units(root))
+    lines = [
+        line for line in content.splitlines() if line.startswith("|") and "experiments/" in line
+    ]
+
+    assert len(lines) == 3
+    assert grandparent.name in lines[0] and "↳" not in lines[0]
+    assert "batch-correction-check" in lines[1] and lines[1].count("↳") == 1
+    assert "does-the-fix-hold-on-replicate-2" in lines[2] and lines[2].count("↳") == 1
+    # The grandchild is nested deeper than the parent -- more leading &nbsp;s.
+    assert lines[2].index("↳") > lines[1].index("↳")
+
+
+def test_render_index_renders_a_dangling_prompted_by_at_the_top_level(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    question = create_question(root, "Follow-up", created=date(2026, 1, 1))
+    fields, body = frontmatter.read(question / "README.md")
+    fields["prompted_by"] = "2020-01-01_does-not-exist"
+    (question / "README.md").write_text(frontmatter.render(fields) + body, encoding="utf-8")
+
+    # This is the dangling case rule SMAIRT008 flags as an error -- the index
+    # must still render the row (at the top level) rather than crash or drop it.
+    content = render_index(scan_units(root))
+
+    assert "2026-01-01_follow-up" in content
+    line = next(line for line in content.splitlines() if "2026-01-01_follow-up" in line)
+    assert "↳" not in line
 
 
 def test_cli_index_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

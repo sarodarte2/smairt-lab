@@ -38,6 +38,13 @@ Findings (severity error/warning; each instance affects the process exit code)::
                project folder.                                        [warning]
     SMAIRT007  Closed-question completeness: status in {supported, refuted,
                inconclusive, dead-end} with an empty verdict:.          [error]
+    SMAIRT008  A question's prompted_by: is set but does not resolve to a
+               real unit (a folder with its own README.md) under
+               experiments/.                                            [error]
+    SMAIRT009  A question unit's hypothesis: is present but empty
+               (reference units, case 3, are exempt).                   [error]
+    SMAIRT010  A CLOSED question unit's '## Analysis plan' body section is
+               missing or empty (reference units, case 3, are exempt).  [error]
 
 Advisory suggestions (a separate channel; never affect the exit code)::
 
@@ -82,6 +89,32 @@ Judgment calls a reviewer should know about
   top-level folders, on top of the fixed scaffold set — an adopted project's
   pre-existing directories don't warn; anything new appearing after adoption
   still does.
+* Rule SMAIRT008 (``prompted_by:`` resolves) treats a target as resolved only
+  when ``experiments/<target>/README.md`` exists — the same "must actually be
+  a unit, not just a folder" standard rule SMAIRT002 already holds reference
+  units' ``paths:`` to. It only ever fires when ``prompted_by:`` is present;
+  nothing requires the field, per spec ticket 01's answer.
+* Rules SMAIRT009 (hypothesis) and SMAIRT010 (Analysis plan) both exempt
+  reference units — detected the same way :func:`_check_evidence_pointers`
+  distinguishes them, by ``"paths" in unit.fields`` — from firing at all. A
+  reference unit describes work adopted after the fact; it was never framed
+  as a testable claim, so demanding a retroactive hypothesis or plan for it
+  would be absurd. Spec ticket 02 states this exemption explicitly for the
+  Analysis plan rule; the hypothesis rule is new territory the ticket didn't
+  directly address, but the same reasoning applies without change, so the
+  same exemption is used for both.
+* Rule SMAIRT009 skips a question whose ``hypothesis:`` key is absent from
+  frontmatter entirely, as opposed to present-but-blank — rule SMAIRT001
+  already reports a missing required field as its own finding, and firing
+  both for the same defect would just be noise. This mirrors how rule
+  SMAIRT002 skips a pointer field that isn't present at all (see
+  :func:`_check_evidence_pointers`).
+* Rule SMAIRT010 reuses :func:`_split_status_sections` against a question
+  unit's own README body, not just ``STATUS.md`` — the function was already
+  a generic ``## Heading`` splitter with nothing STATUS-specific in its
+  implementation, so extending its one caller to two rather than writing a
+  second parser was the whole point of the ticket's "reuse read_status's
+  approach" instruction.
 """
 
 from __future__ import annotations
@@ -109,6 +142,9 @@ RULE_LOG_IMMUTABILITY = "SMAIRT004"
 RULE_STATUS_DRIFT = "SMAIRT005"
 RULE_STRUCTURE_DRIFT = "SMAIRT006"
 RULE_CLOSED_QUESTION = "SMAIRT007"
+RULE_PROMPTED_BY = "SMAIRT008"
+RULE_HYPOTHESIS_NONEMPTY = "SMAIRT009"
+RULE_ANALYSIS_PLAN = "SMAIRT010"
 
 SUGGEST_GIT_UNAVAILABLE = "SMAIRT101"
 SUGGEST_HPC = "SMAIRT102"
@@ -197,10 +233,14 @@ def read_status(project_root: Path) -> StatusDocument | None:
 
 
 def _split_status_sections(body: str) -> dict[str, str]:
-    """Split a STATUS.md body into ``## Heading`` sections, keyed by lowercase heading.
+    """Split a Markdown body into ``## Heading`` sections, keyed by lowercase heading.
 
-    Structural only (foundation 5): this never inspects or judges the researcher's
-    prose, only where one heading ends and the next begins.
+    Despite the name, this has nothing STATUS.md-specific in it — it is a
+    plain ``## Heading`` splitter, so rule SMAIRT010 reuses it directly
+    against a question unit's own README body to find its ``## Analysis
+    plan`` section, rather than writing a second parser for the same shape.
+    Structural only (foundation 5): this never inspects or judges the
+    researcher's prose, only where one heading ends and the next begins.
     """
     sections: dict[str, str] = {}
     heading: str | None = None
@@ -239,12 +279,19 @@ def _status_bullets(text: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class _Unit:
-    """A parsed (or unparseable) unit folder under experiments/, for internal reuse."""
+    """A parsed (or unparseable) unit folder under experiments/, for internal reuse.
+
+    ``body`` (the README's free-text half, below the frontmatter block) is
+    carried here too, not just ``fields`` — rule SMAIRT010 needs it to check
+    the ``## Analysis plan`` section, and reading it once here means that
+    rule doesn't re-read every README a second time on its own.
+    """
 
     path: Path
     rel: str
     error: str | None
     fields: dict[str, Any]
+    body: str
     kind: UnitKind | None
     status: str | None
 
@@ -252,7 +299,7 @@ class _Unit:
 def run_checks(project_root: Path) -> CheckReport:
     """Run every WP2 rule against the project at ``project_root``. Read-only.
 
-    This is the one function that ties all eight rules together: it loads
+    This is the one function that ties all eleven rules together: it loads
     every unit once (:func:`_load_units`), then hands that same list to each
     rule function in turn, collecting their findings/suggestions into one
     report. To add a new rule, write a ``_check_*`` (findings) or
@@ -284,6 +331,9 @@ def run_checks(project_root: Path) -> CheckReport:
     findings += _check_status_drift(project_root, units)
     findings += _check_structure_drift(project_root, units)
     findings += _check_closed_question_completeness(units)
+    findings += _check_prompted_by(project_root, units)
+    findings += _check_hypothesis_nonempty(units)
+    findings += _check_analysis_plan_on_close(units)
 
     suggestions += _suggest_hpc(project_root, units)
     suggestions += _suggest_grouping(units)
@@ -317,10 +367,18 @@ def _load_units(project_root: Path) -> list[_Unit]:
             continue
         rel = str(entry.relative_to(project_root))
         try:
-            fields, _body = frontmatter.read(readme)
+            fields, body = frontmatter.read(readme)
         except frontmatter.FrontmatterError as error:
             units.append(
-                _Unit(path=entry, rel=rel, error=str(error), fields={}, kind=None, status=None)
+                _Unit(
+                    path=entry,
+                    rel=rel,
+                    error=str(error),
+                    fields={},
+                    body="",
+                    kind=None,
+                    status=None,
+                )
             )
             continue
 
@@ -336,6 +394,7 @@ def _load_units(project_root: Path) -> list[_Unit]:
                 rel=rel,
                 error=None,
                 fields=fields,
+                body=body,
                 kind=kind,
                 status=str(status) if status is not None else None,
             )
@@ -763,7 +822,143 @@ def _check_closed_question_completeness(units: list[_Unit]) -> list[Finding]:
     return findings
 
 
-# --- rule 8: growth suggestions (advisory channel) ---------------------------
+# --- rule 8: prompted_by resolves ---------------------------------------------
+
+
+def _prompted_by_resolves(project_root: Path, target: str) -> bool:
+    """Does ``prompted_by: target`` name a real unit — a folder with its own README.md?
+
+    Mirrors the standard :func:`_pointer_resolves` already applies to a
+    reference unit's ``paths:`` (project-root relative, not unit-relative,
+    since ``prompted_by:`` names another unit under ``experiments/``, not a
+    path local to this one). A bare folder that happens to share the name
+    but has no README.md — e.g. one rule SMAIRT006 would separately flag as
+    structure drift — does not count as "a real unit."
+    """
+    return (project_root / "experiments" / target / "README.md").is_file()
+
+
+def _check_prompted_by(project_root: Path, units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT008: a question's prompted_by:, if set, must resolve to a real unit.
+
+    ``prompted_by:`` (spec ticket 01, "sidequest lineage") records which unit's
+    result raised this question — set only via ``smairt unit new question
+    --from``, which already validates the target exists at creation (see
+    :func:`smairt.units.create_question`). This rule is the backstop for
+    every other way the field can go stale afterward: the origin unit gets
+    renamed, moved, or (rarely) deleted by hand. The field is never required,
+    so this only ever fires when it is present — an unset ``prompted_by:``
+    is silent, exactly like an unset ``script:``/``log:`` on an open unit.
+    """
+    findings: list[Finding] = []
+    for unit in units:
+        if unit.kind is not UnitKind.question:
+            continue
+        target = str(unit.fields.get("prompted_by", "")).strip()
+        if not target:
+            continue
+        if not _prompted_by_resolves(project_root, target):
+            findings.append(
+                Finding(
+                    RULE_PROMPTED_BY,
+                    ERROR,
+                    f"{unit.rel}/README.md",
+                    f"'prompted_by: {target}' does not resolve to a real unit under "
+                    "experiments/; fix the folder name, or remove the field if this "
+                    "question was not actually prompted by another unit's result.",
+                )
+            )
+    return findings
+
+
+# --- rule 9: hypothesis is non-empty ------------------------------------------
+
+
+def _check_hypothesis_nonempty(units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT009: a question unit's hypothesis: must actually say something.
+
+    Hypothesis-before-run is SMAIRT's central discipline for a question unit,
+    but until this rule existed nothing checked that ``hypothesis:`` held
+    real text — SMAIRT001 only checks that the key exists, and ``smairt unit
+    new question`` fills a missing ``--hypothesis`` with ``""``, which passed
+    clean (spec ticket 02 verified this empirically before deciding to close
+    the gap). This rule fires for any status, open or closed — waiting until
+    a question closes to demand its claim would let the claim get written
+    after the result is already known, which is exactly the retrofitting
+    hypothesis-before-run exists to prevent.
+
+    Skips a unit whose ``hypothesis:`` key is missing entirely (as opposed to
+    present-but-blank) — SMAIRT001 already reports that as a missing
+    required field, so this rule only adds the case SMAIRT001 can't see: a
+    present key with nothing in it. Also skips reference units (``paths:``
+    present, case 3, spec Part II) — see the module docstring's "Judgment
+    calls" section for why.
+    """
+    findings: list[Finding] = []
+    for unit in units:
+        if unit.kind is not UnitKind.question:
+            continue
+        if "paths" in unit.fields:
+            continue
+        if "hypothesis" not in unit.fields:
+            continue
+        hypothesis = str(unit.fields["hypothesis"]).strip()
+        if not hypothesis:
+            findings.append(
+                Finding(
+                    RULE_HYPOTHESIS_NONEMPTY,
+                    ERROR,
+                    f"{unit.rel}/README.md",
+                    "hypothesis: is empty; write the one-line claim this question "
+                    "tests before treating any run as evidence for or against it.",
+                )
+            )
+    return findings
+
+
+# --- rule 10: closed question needs a non-empty Analysis plan ----------------
+
+
+def _check_analysis_plan_on_close(units: list[_Unit]) -> list[Finding]:
+    """Rule SMAIRT010: a CLOSED question's '## Analysis plan' section must not be empty.
+
+    "Closed" means the same set of statuses rule SMAIRT007 already uses
+    (anything but open) — the moment a question closes is when the plan
+    should already exist, so this is one more thing checked in the same edit
+    that sets ``verdict:``, not a separate gate. Reuses
+    :func:`_split_status_sections` against the unit's own README body
+    (:attr:`_Unit.body`) rather than writing a second ``## Heading`` parser —
+    see the module docstring's "Judgment calls" section. Skips reference
+    units (``paths:`` present, case 3) for the same reason rule SMAIRT009
+    does: adopted pre-existing work was never framed as a testable claim, so
+    it has no analysis plan to have pre-specified.
+    """
+    findings: list[Finding] = []
+    for unit in units:
+        if unit.kind is not UnitKind.question:
+            continue
+        if unit.status not in _CLOSED_QUESTION_STATUSES:
+            continue
+        if "paths" in unit.fields:
+            continue
+        sections = _split_status_sections(unit.body)
+        plan = sections.get("analysis plan", "")
+        if not plan.strip():
+            findings.append(
+                Finding(
+                    RULE_ANALYSIS_PLAN,
+                    ERROR,
+                    f"{unit.rel}/README.md",
+                    f"status '{unit.status}' requires a non-empty '## Analysis plan' "
+                    "section -- write what you measured and how you judged the "
+                    "result before closing (amend it with '**Amended "
+                    "YYYY-MM-DD:**' if the plan changed after it was written).",
+                )
+            )
+    return findings
+
+
+# --- rule 11: growth suggestions (advisory channel) ---------------------------
 
 
 def _contains_slurm_content(unit_dir: Path) -> bool:

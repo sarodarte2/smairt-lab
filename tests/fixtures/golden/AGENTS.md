@@ -34,10 +34,21 @@ frontmatter — the tool itself is never copied in); **referenced elsewhere**
 `smairt unit new stage|question` is the ONLY way to create a unit — it is
 the sole numbering and dating authority. Never `mkdir` one by hand.
 
+When a result raises a *new* question, record where it came from:
+`smairt unit new question --from <the-unit-that-raised-it>`. The test for
+whether it earns its own unit is whether you can state a new testable claim
+in one line — if you can, it is a new question; if not, it is still part of
+the one you are already in.
+
 ## Frontmatter duties
 
-Every unit README opens with a YAML block. Keep `status` current; a question
-closing needs a one-line `verdict` in the same edit. A dead end is a status
+Every unit README opens with a YAML block. Keep `status` current; closing a
+question needs a one-line `verdict` and a non-empty `## Analysis plan`
+section in the same edit. A verdict answers only its own stated
+`hypothesis:` — a finding that isn't about that line belongs in its own
+unit, never retrofitted into this one. If the plan changes for a real
+reason, keep the original text and append `**Amended <YYYY-MM-DD>:**` plus
+what changed and why, rather than rewriting it. A dead end is a status
 change in place (`status: dead-end` + why, in one line) — never move or
 delete the folder. Every evidence pointer (`script:`, `log:`, `outputs:`)
 must resolve to a real path; `smairt check` verifies this.
@@ -53,9 +64,10 @@ locate` — never a new convention of your own.
 
 ## The loop
 
-question -> hypothesis (written before the run) -> run (log captured) ->
-**What happened** (facts, only what the log shows) -> **What it means**
-(your interpretation) -> verdict + STATUS.md update -> next question.
+question -> hypothesis + analysis plan (both written before the run) ->
+run (log captured) -> **What happened** (facts, only what the log shows) ->
+**What it means** (your interpretation) -> verdict + STATUS.md update ->
+next question.
 
 ## The stakes rule
 

@@ -232,7 +232,12 @@ def test_json_output_mirrors_text_content(tmp_path: Path) -> None:
     root = _project(tmp_path)
     stage = create_stage(root, "Alignment", created=date(2026, 1, 1))
     _freeze_stage(stage)
-    create_question(root, "Does batch correction help?", created=date(2026, 1, 10))
+    create_question(
+        root,
+        "Does batch correction help?",
+        hypothesis="Batch correction removes the batch effect without erasing biology.",
+        created=date(2026, 1, 10),
+    )
 
     report = build_status_report(root)
     payload = to_json(report)

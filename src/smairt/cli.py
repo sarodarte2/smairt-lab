@@ -447,6 +447,14 @@ def unit_new(
     hypothesis: str | None = typer.Option(
         None, "--hypothesis", help="The probe's hypothesis (question units only)."
     ),
+    from_unit: str | None = typer.Option(
+        None,
+        "--from",
+        help=(
+            "Origin unit's folder name (question units only): this question was "
+            "prompted by that unit's result. Validated to exist at creation."
+        ),
+    ),
     receipt: bool = typer.Option(
         False, "--receipt", help="Record this unit as a receipt for an outside tool."
     ),
@@ -490,6 +498,7 @@ def unit_new(
                 root,
                 title,
                 hypothesis=hypothesis,
+                prompted_by=from_unit,
                 receipt=receipt,
                 tool=tool,
                 tool_version=tool_version,

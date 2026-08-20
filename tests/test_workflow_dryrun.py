@@ -80,6 +80,15 @@ def test_dry_run_workflow_from_empty_project_to_a_clean_check(
     assert fields["hypothesis"] == hypothesis
     assert fields["log"] == f"logs/{slug}.log"
 
+    # The analysis plan is written now too, in the same conversation that
+    # sharpened the hypothesis -- before anything runs (smairt-new-question).
+    body = body.replace(
+        "## Analysis plan\n\n",
+        "## Analysis plan\n\nCompare the separation score with and without "
+        "replicate 3; call the hypothesis supported if excluding it raises "
+        "the score.\n\n",
+    )
+
     # 4. A run happens: one-off probe code stays inside its unit (AGENTS.md's
     #    "own code" case), and the raw log lands where the unit's
     #    frontmatter already points (pre-filled by `smairt unit new`).

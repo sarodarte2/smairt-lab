@@ -94,6 +94,8 @@ Verified against the `v2-rebuild` working tree:
 
 - [The pre-specified analysis plan](issues/02-pre-specified-analysis-plan.md) — a required `## Analysis plan` body section (not a frontmatter line: a real plan doesn't fit on one, and forcing it yields `plan: standard analysis`, which looks like compliance), non-empty to **close**. **Ticket premise was wrong and is corrected: hypothesis-before-run is NOT enforced today** — an empty `hypothesis:` passes `check` clean, verified empirically — so an empty hypothesis becomes an error too. Amendments keep the original and append a greppable `**Amended <date>:**` line rather than being punished. `smairt-new-question` asks at creation so before-the-run is the normal path; the close check is a backstop. Question units only. **Timing is deliberately not recorded** — a disclosure field was proposed and dropped: any two-valued label where one value is better is a grade, and the amendment marker already does the honest version.
 
+- [Implement the scientific conventions](issues/10-implement-the-scientific-conventions.md) — `SMAIRT008/009/010`, `--from`, `## Analysis plan` in the question template, `INDEX.md` lineage nesting, contract and skill text, ADR 0005. Two review corrections: `INDEX.md` indented with `&nbsp;` entities that read as literal junk in a plain-text view (now a real U+00A0), and `AGENTS.md` never mentioned `--from` at all — invisible to any assistant that reads the contract but not the one skill, since `check` deliberately never nags for the link.
+
 ## Not yet specified
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats
