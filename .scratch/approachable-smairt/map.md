@@ -100,6 +100,8 @@ Verified against the `v2-rebuild` working tree:
 
 - [Rewrite CONTEXT.md](issues/05-rewrite-context-md.md) — 25 v2 terms sourced from the code; zero occurrences of screen/palette/blueprint/capability/phase remain. Core Relationships and Invariants dropped rather than re-derived (spec-shaped assertions, not definitions — and a second source of truth that would drift from `ARCHITECTURE.md`). Review fixes: `Rule` claimed there were ten, ignoring the advisory `SMAIRT101`–`SMAIRT105`; `Evidence pointer` inverted the open/closed strictness and omitted that `paths:` resolves from the project root.
 
+- [Split the README](issues/06-split-the-readme.md) — `README.md` (237 lines) is the path in; `docs/REFERENCE.md` (319) holds the flag tables, harness matrix, and full rule table. Professional register, explains *why* each convention exists, states plainly that there is no worked example. Review catches: the README claimed a hypothesis was required **at creation** (it is not — that distinction is the whole of ticket 02's answer), and `ARCHITECTURE.md`'s rule count was wrong in both its old and proposed form, so it now names the two channels instead of a single drifting number.
+
 ## Not yet specified
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats
