@@ -1,6 +1,6 @@
 """Tests for ``smairt connect`` (src/smairt/connect.py): per-harness hook wiring.
 
-One section per harness (Claude Code, Codex, Cursor, OpenCode, Gemini CLI)
+One section per harness (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, pi)
 plus the CI template and the shared idempotency/strict-mode behavior. Checks
 what gets written, that re-running is a no-op, and that an edited file is
 left alone with a warning rather than overwritten.
@@ -49,7 +49,7 @@ def test_claude_code_writes_bridge_and_stop_hook(tmp_path: Path) -> None:
     assert ".claude/settings.json" in result.written
     payload = json.loads((root / ".claude" / "settings.json").read_text())
     assert "_comment" in payload
-    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt check"
+    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt hook report"
     assert "PreToolUse" not in payload["hooks"]
 
 
@@ -81,7 +81,7 @@ def test_claude_code_strict_hooks_adds_pre_tool_use_blocking_config(tmp_path: Pa
 
     payload = json.loads((root / ".claude" / "settings.json").read_text())
     pre_tool_use = payload["hooks"]["PreToolUse"][0]
-    assert pre_tool_use["hooks"][0]["command"] == "smairt check --json"
+    assert pre_tool_use["hooks"][0]["command"] == "smairt hook gate"
     assert "matcher" in pre_tool_use
 
 
@@ -122,7 +122,7 @@ def test_codex_writes_hooks_json_with_no_bridge(tmp_path: Path) -> None:
 
     assert result.written == (".codex/hooks.json", "smairt.yaml")
     payload = json.loads((root / ".codex" / "hooks.json").read_text())
-    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt check"
+    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt hook report"
 
 
 def test_codex_strict_hooks_adds_pre_tool_use(tmp_path: Path) -> None:
@@ -131,7 +131,7 @@ def test_codex_strict_hooks_adds_pre_tool_use(tmp_path: Path) -> None:
     connect_module.connect(root, Harness.codex, strict=True)
 
     payload = json.loads((root / ".codex" / "hooks.json").read_text())
-    assert payload["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "smairt check --json"
+    assert payload["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "smairt hook gate"
 
 
 def test_codex_second_run_is_a_no_op(tmp_path: Path) -> None:
@@ -159,14 +159,26 @@ def test_codex_researcher_edited_hook_file_is_warned_about_and_untouched(tmp_pat
 # --- cursor -------------------------------------------------------------------
 
 
-def test_cursor_writes_hooks_json(tmp_path: Path) -> None:
+def test_cursor_writes_hooks_json_and_rule(tmp_path: Path) -> None:
     root = _project(tmp_path)
 
     result = connect_module.connect(root, Harness.cursor, strict=False)
 
-    assert result.written == (".cursor/hooks.json", "smairt.yaml")
+    assert result.written == (".cursor/hooks.json", ".cursor/rules/smairt.mdc", "smairt.yaml")
     payload = json.loads((root / ".cursor" / "hooks.json").read_text())
-    assert payload["hooks"]["stop"][0]["command"] == "smairt check"
+    assert payload["version"] == 1
+    assert payload["hooks"]["stop"][0]["command"] == "smairt hook report"
+
+
+def test_cursor_rule_is_always_applied_and_points_at_the_contract(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.cursor, strict=False)
+
+    content = (root / ".cursor" / "rules" / "smairt.mdc").read_text()
+    assert content.startswith("---\n")
+    assert "alwaysApply: true" in content
+    assert "AGENTS.md" in content
 
 
 def test_cursor_strict_hooks_adds_pre_tool_use(tmp_path: Path) -> None:
@@ -175,7 +187,7 @@ def test_cursor_strict_hooks_adds_pre_tool_use(tmp_path: Path) -> None:
     connect_module.connect(root, Harness.cursor, strict=True)
 
     payload = json.loads((root / ".cursor" / "hooks.json").read_text())
-    assert payload["hooks"]["preToolUse"][0]["command"] == "smairt check --json"
+    assert payload["hooks"]["preToolUse"][0]["command"] == "smairt hook gate"
 
 
 # --- opencode -------------------------------------------------------------------
@@ -188,7 +200,7 @@ def test_opencode_writes_a_plugin_file(tmp_path: Path) -> None:
 
     assert result.written == (".opencode/plugins/smairt-check.ts", "smairt.yaml")
     content = (root / ".opencode" / "plugins" / "smairt-check.ts").read_text()
-    assert "smairt check" in content
+    assert "smairt hook report" in content
     assert '"tool.execute.before":' not in content  # the actual hook, not the doc comment
 
 
@@ -199,7 +211,7 @@ def test_opencode_strict_hooks_adds_blocking_tool_hook(tmp_path: Path) -> None:
 
     content = (root / ".opencode" / "plugins" / "smairt-check.ts").read_text()
     assert "tool.execute.before" in content
-    assert "smairt check --json" in content
+    assert "smairt hook gate" in content
 
 
 def test_opencode_second_run_is_a_no_op(tmp_path: Path) -> None:
@@ -210,6 +222,56 @@ def test_opencode_second_run_is_a_no_op(tmp_path: Path) -> None:
 
     assert result.written == ()
     assert result.skipped == (".opencode/plugins/smairt-check.ts",)
+
+
+# --- pi -------------------------------------------------------------------------
+
+
+def test_pi_writes_an_extension_file(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    result = connect_module.connect(root, Harness.pi, strict=False)
+
+    assert result.written == (".pi/extensions/smairt-check.ts", "smairt.yaml")
+    content = (root / ".pi" / "extensions" / "smairt-check.ts").read_text()
+    assert "export default function (pi: ExtensionAPI)" in content
+    assert 'pi.on("agent_end"' in content
+    assert "smairt hook report" in content
+    assert 'pi.on("tool_call"' not in content
+
+
+def test_pi_strict_hooks_adds_blocking_tool_call_handler(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.pi, strict=True)
+
+    content = (root / ".pi" / "extensions" / "smairt-check.ts").read_text()
+    assert 'pi.on("tool_call"' in content
+    assert "smairt hook gate" in content
+    assert "block: true" in content
+
+
+def test_pi_second_run_is_a_no_op(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    connect_module.connect(root, Harness.pi, strict=False)
+
+    result = connect_module.connect(root, Harness.pi, strict=False)
+
+    assert result.written == ()
+    assert result.skipped == (".pi/extensions/smairt-check.ts",)
+
+
+def test_pi_researcher_edited_extension_is_warned_about_and_untouched(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    extension_dir = root / ".pi" / "extensions"
+    extension_dir.mkdir(parents=True)
+    custom = "export default function () {}\n"
+    (extension_dir / "smairt-check.ts").write_text(custom, encoding="utf-8")
+
+    result = connect_module.connect(root, Harness.pi, strict=False)
+
+    assert (extension_dir / "smairt-check.ts").read_text() == custom
+    assert any(".pi/extensions/smairt-check.ts" in warning for warning in result.warned)
 
 
 # --- gemini-cli -----------------------------------------------------------------
@@ -223,7 +285,7 @@ def test_gemini_writes_settings_with_context_filename_and_session_end_hook(tmp_p
     assert result.written == (".gemini/settings.json", "smairt.yaml")
     payload = json.loads((root / ".gemini" / "settings.json").read_text())
     assert "AGENTS.md" in payload["context"]["fileName"]
-    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt check"
+    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt hook report"
     assert "BeforeTool" not in payload["hooks"]
 
 
@@ -233,7 +295,7 @@ def test_gemini_strict_hooks_adds_before_tool_blocking_hook(tmp_path: Path) -> N
     connect_module.connect(root, Harness.gemini_cli, strict=True)
 
     payload = json.loads((root / ".gemini" / "settings.json").read_text())
-    assert payload["hooks"]["BeforeTool"][0]["command"] == "smairt check --json"
+    assert payload["hooks"]["BeforeTool"][0]["command"] == "smairt hook gate"
 
 
 def test_gemini_second_run_is_a_no_op(tmp_path: Path) -> None:
@@ -261,7 +323,7 @@ def test_gemini_merges_into_an_existing_settings_file_without_clobbering_it(tmp_
     assert payload["tools"] == {"core": ["ReadFileTool"]}
     # smairt's keys were merged in.
     assert "AGENTS.md" in payload["context"]["fileName"]
-    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt check"
+    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt hook report"
     assert ".gemini/settings.json" in result.written
 
 
@@ -276,7 +338,7 @@ def test_gemini_never_clobbers_a_researcher_customized_context_filename(tmp_path
 
     payload = json.loads((gemini_dir / "settings.json").read_text())
     assert payload["context"]["fileName"] == "GEMINI.md"  # left exactly as the researcher set it
-    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt check"  # still merged in
+    assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt hook report"  # still merged in
 
 
 def test_gemini_invalid_json_is_warned_about_and_untouched(tmp_path: Path) -> None:
@@ -497,5 +559,5 @@ def test_cli_new_with_harness_claude_code_produces_the_wiring_end_to_end(
     root = tmp_path / "end_to_end"
     assert (root / ".claude" / "settings.json").is_file()
     payload = json.loads((root / ".claude" / "settings.json").read_text())
-    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt check"
+    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "smairt hook report"
     assert yaml.safe_load((root / "smairt.yaml").read_text())["harnesses"] == ["claude-code"]

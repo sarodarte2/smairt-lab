@@ -150,6 +150,33 @@ assistant, project conventions, or local dashboard preferences without
 changing the immutable project slug or folder. License changes show a preview,
 require `--confirm-license`, and refuse to replace modified `LICENSE` text.
 
+## Connect A Coding Assistant
+
+`smairt connect <harness>` wires a harness's native hook and rules surface to
+the one shared contract — `AGENTS.md` plus `smairt check` — so every assistant
+gets the same discipline through its own best channel:
+
+| Harness | Generated wiring |
+| --- | --- |
+| `claude-code` | `CLAUDE.md` bridge + `.claude/settings.json` Stop hook |
+| `codex` | `.codex/hooks.json` (loads once you trust the project) |
+| `cursor` | `.cursor/hooks.json` + always-applied `.cursor/rules/smairt.mdc` |
+| `opencode` | `.opencode/plugins/smairt-check.ts` |
+| `pi` | `.pi/extensions/smairt-check.ts` |
+| `gemini-cli` | smairt keys merged into `.gemini/settings.json` |
+
+Codex, OpenCode, and pi read `AGENTS.md` natively, so they need no bridge
+file. Every generated file names itself as generated, runs only read-only
+smairt commands, and can be deleted to disable the wiring; re-running
+`connect` never overwrites a file you have edited.
+
+The hooks call `smairt hook report`, which surfaces `smairt check` findings at
+session end and always exits 0. Setting `settings.strict_hooks: true` in
+`smairt.yaml` (then re-running `connect`) also wires `smairt hook gate`, which
+exits 2 — the block code these harnesses understand — so edits are refused
+while findings exist. `smairt connect --ci` writes a GitHub Actions workflow,
+the enforcement floor that binds every contributor regardless of local hooks.
+
 ## Generated Workspace
 
 Each project is ordinary, readable files:

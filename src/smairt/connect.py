@@ -12,8 +12,9 @@ Two things every generated file does:
 * Names itself as generated (a leading comment, or a ``_comment`` key where the
   format is JSON and comments are not legal), says what it does, and says that
   deleting it disables the wiring.
-* Runs only read-only ``smairt`` commands (``smairt check`` / ``smairt check
-  --json``) — never anything that writes.
+* Runs only read-only ``smairt`` commands (``smairt hook report`` / ``smairt
+  hook gate``, thin wrappers over ``smairt check`` that speak each hook
+  protocol's exit-code language) — never anything that writes.
 
 Public entry points
 --------------------
@@ -36,22 +37,39 @@ touched, so it never actually reaches the "differs" warning path.
 
 Judgment calls a reviewer should know about
 --------------------------------------------
-* Grounded vs. best-effort: the research file
-  (``.scratch/practical-smairt/research/10-harness-guidance-conventions.md``)
-  names every harness's hook *event vocabulary* and config *location*, but
-  never quotes a literal hook-config JSON/TS example for any of the five
-  harnesses. Claude Code's ``.claude/settings.json`` hooks shape used below
-  (``{"hooks": {"<Event>": [{"matcher": ..., "hooks": [{"type": "command",
-  "command": ...}]}]}}``) is standard, widely-documented Claude Code product
-  behavior, reproduced here from general knowledge with high confidence — not
-  literally present in the research file's prose. Codex, Cursor, Gemini CLI,
-  and OpenCode's exact hook-config shapes were *not* found in the research
-  file at that level of detail; each of those four renderers below carries an
-  explicit "BEST-EFFORT CONFIG" comment inside the generated file itself,
-  naming exactly what was confirmed (event names, config location) versus
-  inferred (the literal structure) — do not treat those four as verified.
+* Grounded vs. best-effort: five of the six configs below were verified
+  against each vendor's own documentation in August 2026 —
+
+  - Claude Code: ``.claude/settings.json`` ``{"hooks": {"<Event>":
+    [{"matcher": ..., "hooks": [{"type": "command", "command": ...}]}]}}``;
+    a PreToolUse hook blocks via exit code 2 (stderr goes back to the agent).
+  - Codex: project-scoped ``.codex/hooks.json`` (loaded only once the project
+    is trusted), same event schema as its inline ``[hooks.<Event>]`` tables in
+    ``config.toml`` and deliberately Claude-shaped
+    (https://learn.chatgpt.com/docs/config-file/config-advanced).
+  - Cursor: ``.cursor/hooks.json`` with a required ``"version": 1``, camelCase
+    event names (``stop``, ``preToolUse``), flat ``{"command": ...}`` entries,
+    exit code 2 blocks (https://cursor.com/docs/hooks). Rules live in
+    ``.cursor/rules/*.mdc`` with YAML frontmatter.
+  - OpenCode: plugins in ``.opencode/plugins/`` export a named async function
+    receiving ``{ project, client, $, directory, worktree }`` and returning a
+    hooks object; ``tool.execute.before`` blocks by throwing, and
+    ``session.idle`` is a real event (https://opencode.ai/docs/plugins/).
+  - pi: project-local extensions in ``.pi/extensions/*.ts`` default-export a
+    factory receiving ``ExtensionAPI``; a ``tool_call`` handler blocks by
+    returning ``{ block: true, reason }``; ``agent_end`` fires when a run ends
+    (https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md).
+
+  Gemini CLI remains the one best-effort config: its hook entry shape was
+  never verified against a literal example, and the generated file still says
+  so inside its ``_comment``.
+* Exit-code adaptation: hook configs call ``smairt hook gate`` / ``smairt hook
+  report`` (see ``cli.py``) rather than ``smairt check``, because the raw
+  check's exit 1 means "non-blocking error" to every hook protocol above —
+  only exit 2 blocks. ``gate`` exits 2 while findings exist; ``report`` always
+  exits 0 so a session-end hook can never wedge a harness in a failure loop.
 * Turning ``strict_hooks`` on *after* a harness has already been connected:
-  for the four whole-file harnesses (claude-code, codex, cursor, opencode),
+  for the whole-file harnesses (claude-code, codex, cursor, opencode, pi),
   the previously-written non-strict file will differ from the newly-desired
   strict file, so re-running ``connect`` reports it as "differs, left
   untouched" rather than silently upgrading it. This follows the letter of
@@ -61,9 +79,10 @@ Judgment calls a reviewer should know about
   content alone. The practical fix is to delete the file and re-run connect.
   Gemini CLI does not have this limitation, because its wiring is merged
   key-by-key into one file rather than compared whole.
-* ``.opencode/plugins/*.ts`` and CI YAML are plain-text comparisons like the
-  JSON hook files; TypeScript/YAML comments carry the same generated-by
-  notice JSON expresses via ``_comment``.
+* ``.opencode/plugins/*.ts``, ``.pi/extensions/*.ts``, ``.cursor/rules/*.mdc``,
+  and CI YAML are plain-text comparisons like the JSON hook files;
+  TypeScript/Markdown/YAML comments carry the same generated-by notice JSON
+  expresses via ``_comment``.
 * The CI workflow content is standard GitHub Actions boilerplate (checkout +
   setup-python + ``pip install smairt`` + ``smairt check``), not sourced from
   the harness research file (CI was out of that file's scope).
@@ -186,30 +205,33 @@ def _record_harness(project_root: Path, harness: Harness, builder: _ResultBuilde
 
 
 # --- Claude Code ----------------------------------------------------------------
-# Grounded in the research file's Claude Code section (hooks: PreToolUse can block
-# via a command hook; Stop can halt; both configured in .claude/settings.json) plus
-# the widely-documented settings.json hooks shape (not itself quoted verbatim in
-# the research file -- see module docstring).
+# Verified shape: .claude/settings.json hooks, PascalCase events, entries of
+# {"matcher": ..., "hooks": [{"type": "command", "command": ...}]}. A PreToolUse
+# command hook blocks by exiting 2, with stderr fed back to the agent -- which is
+# why the strict entry runs `smairt hook gate` (exits 2 on findings) and not
+# `smairt check` (exits 1, a non-blocking error to Claude Code).
 
 
 def _render_claude_settings(strict: bool) -> str:
     """Build the JSON content of ``.claude/settings.json`` (Claude Code's hook config)."""
     hooks: dict[str, Any] = {
-        "Stop": [{"hooks": [{"type": "command", "command": "smairt check"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "smairt hook report"}]}],
     }
     notice = (
-        "Generated by `smairt connect claude-code`. Runs `smairt check` (read-only) "
-        "when a session stops, so findings feed back before it ends."
+        "Generated by `smairt connect claude-code`. Runs `smairt hook report` "
+        "(read-only, always exits 0) when a session stops, so findings feed back "
+        "before it ends."
     )
     if strict:
         hooks["PreToolUse"] = [
             {
                 "matcher": "Write|Edit|MultiEdit",
-                "hooks": [{"type": "command", "command": "smairt check --json"}],
+                "hooks": [{"type": "command", "command": "smairt hook gate"}],
             }
         ]
         notice += (
-            " Also blocks Write/Edit/MultiEdit while `smairt check` reports findings "
+            " Also blocks Write/Edit/MultiEdit while `smairt check` reports findings: "
+            "`smairt hook gate` exits 2, Claude Code's block code "
             "(strict_hooks: true in smairt.yaml)."
         )
     notice += " Delete this file, or the smairt entries in it, to disable the wiring."
@@ -224,28 +246,30 @@ def _connect_claude_code(project_root: Path, strict: bool, builder: _ResultBuild
 
 
 # --- Codex ------------------------------------------------------------------
-# BEST-EFFORT: research file confirms event names (Stop, PreToolUse, ...), the
-# .codex/hooks.json location, the deny payload shape ({"hookSpecificOutput":
-# {"decision": "deny"}}), and that "event names closely mirror Claude Code's" --
-# but does not quote a literal hooks.json example. Structure below is inferred by
-# analogy to Claude Code's own settings.json hooks shape.
+# Verified shape: project-scoped .codex/hooks.json uses the same event schema as
+# the inline [hooks.<Event>] tables in config.toml -- PascalCase events (Stop,
+# PreToolUse, SessionEnd, ...), entries of {"matcher": ..., "hooks": [{"type":
+# "command", "command": ...}]}, deliberately mirroring Claude Code's shape.
+# Codex loads a repo's .codex/ config only once the project is trusted, so the
+# generated notice says so.
 
 
 def _render_codex_hooks(strict: bool) -> str:
-    """Build the JSON content of ``.codex/hooks.json`` (Codex's hook config, best-effort)."""
-    hooks: dict[str, Any] = {"Stop": [{"hooks": [{"type": "command", "command": "smairt check"}]}]}
+    """Build the JSON content of ``.codex/hooks.json`` (Codex's project hook config)."""
+    hooks: dict[str, Any] = {
+        "Stop": [{"hooks": [{"type": "command", "command": "smairt hook report"}]}]
+    }
     notice = (
-        "Generated by `smairt connect codex`. BEST-EFFORT CONFIG: the research survey "
-        "confirmed Codex's hook event names (Stop, PreToolUse, ...), the .codex/hooks.json "
-        "location, and that event names closely mirror Claude Code's, but did not capture a "
-        "literal hooks.json example -- this structure is inferred by analogy and should be "
-        "verified against your Codex version. Runs `smairt check` (read-only) when a session "
-        "stops, so findings feed back before it ends."
+        "Generated by `smairt connect codex`. Runs `smairt hook report` (read-only, "
+        "always exits 0) when a session stops, so findings feed back before it ends. "
+        "Codex loads a project's .codex/ configuration only after you trust the "
+        "project, so approve the trust prompt for this wiring to take effect."
     )
     if strict:
-        hooks["PreToolUse"] = [{"hooks": [{"type": "command", "command": "smairt check --json"}]}]
+        hooks["PreToolUse"] = [{"hooks": [{"type": "command", "command": "smairt hook gate"}]}]
         notice += (
-            " Also blocks tool calls while `smairt check` reports findings "
+            " Also blocks tool calls while `smairt check` reports findings: "
+            "`smairt hook gate` exits 2, the block code "
             "(strict_hooks: true in smairt.yaml)."
         )
     notice += " Delete this file to disable the wiring."
@@ -259,60 +283,79 @@ def _connect_codex(project_root: Path, strict: bool, builder: _ResultBuilder) ->
 
 
 # --- Cursor -------------------------------------------------------------------
-# BEST-EFFORT: research file confirms event names (stop, preToolUse,
-# beforeShellExecution, ...), the .cursor/hooks.json location, and that exit code 2
-# blocks an action -- but does not quote a literal hooks.json example.
+# Verified shape: .cursor/hooks.json requires a top-level "version": 1, uses
+# camelCase event names (stop, preToolUse, beforeShellExecution, ...), and flat
+# {"command": ...} hook entries. A command hook blocks by exiting 2 (equivalent
+# to printing {"permission": "deny"}). Cursor's native guidance channel is
+# .cursor/rules/*.mdc files with YAML frontmatter, so connect also writes one
+# always-applied rule pointing the agent at the AGENTS.md contract.
 
 
 def _render_cursor_hooks(strict: bool) -> str:
-    """Build the JSON content of ``.cursor/hooks.json`` (Cursor's hook config, best-effort)."""
-    hooks: dict[str, Any] = {"stop": [{"command": "smairt check"}]}
+    """Build the JSON content of ``.cursor/hooks.json`` (Cursor's hook config)."""
+    hooks: dict[str, Any] = {"stop": [{"command": "smairt hook report"}]}
     notice = (
-        "Generated by `smairt connect cursor`. BEST-EFFORT CONFIG: the research survey "
-        "confirmed Cursor's hook event names (stop, preToolUse, ...), the .cursor/hooks.json "
-        "location, and that exit code 2 blocks an action, but did not capture a literal "
-        "hooks.json example -- this structure is inferred and should be verified against "
-        "Cursor's current docs. Runs `smairt check` (read-only) when the agent session stops, "
-        "so findings feed back before it ends."
+        "Generated by `smairt connect cursor`. Runs `smairt hook report` (read-only, "
+        "always exits 0) when the agent session stops, so findings feed back before "
+        "it ends."
     )
     if strict:
-        hooks["preToolUse"] = [{"command": "smairt check --json"}]
+        hooks["preToolUse"] = [{"command": "smairt hook gate"}]
         notice += (
-            " Also blocks tool calls while `smairt check` reports findings "
+            " Also blocks tool calls while `smairt check` reports findings: "
+            "`smairt hook gate` exits 2, Cursor's block code "
             "(strict_hooks: true in smairt.yaml)."
         )
     notice += " Delete this file to disable the wiring."
-    payload = {"_comment": notice, "hooks": hooks}
+    payload = {"_comment": notice, "version": 1, "hooks": hooks}
     return json.dumps(payload, indent=2) + "\n"
 
 
+_CURSOR_RULE = """\
+---
+description: SMAIRT research workspace working agreement
+alwaysApply: true
+---
+
+<!-- Generated by `smairt connect cursor`. Delete this file to disable it. -->
+
+This is a SMAIRT scientific research workspace, not a software project.
+
+- Read `AGENTS.md` at the project root first — it is the workflow contract.
+- Never `mkdir` a unit by hand: `smairt unit new stage|question` is the sole
+  numbering and dating authority under `experiments/`.
+- Raw logs in a unit's `logs/` are never edited once written, and every claim
+  points at the log or figure that backs it.
+- Run `smairt status` when you join a session; run `smairt check` before you
+  end one and resolve findings.
+"""
+
+
 def _connect_cursor(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
-    """Write Cursor's one wiring file: its hook config."""
+    """Write Cursor's two wiring files: its hook config and its always-applied rule."""
     _write_or_warn(project_root, ".cursor/hooks.json", _render_cursor_hooks(strict), builder)
+    _write_or_warn(project_root, ".cursor/rules/smairt.mdc", _CURSOR_RULE, builder)
 
 
 # --- OpenCode -------------------------------------------------------------------
-# BEST-EFFORT: research file confirms plugins live in .opencode/plugins/ (JS/TS
-# modules), that tool.execute.before throwing an Error blocks a tool call, and
-# names session/message/file events generically -- but does not name a literal
-# session-end event or quote a plugin example. "session.idle" below is inferred
-# and should be verified against OpenCode's current plugin docs.
+# Verified shape: plugins live in .opencode/plugins/ (project) as JS/TS modules
+# exporting a named async function that receives { project, client, $, directory,
+# worktree } and returns a hooks object. "session.idle" is a real event, and a
+# `tool.execute.before` hook blocks a tool call by throwing an Error whose
+# message reaches the agent. OpenCode reads AGENTS.md natively, so no bridge
+# file is needed.
 
 
 def _render_opencode_plugin(strict: bool) -> str:
     """Build the TypeScript source of OpenCode's plugin file (a JS/TS module, not JSON)."""
     lines = [
-        "// Generated by `smairt connect opencode`. BEST-EFFORT CONFIG: the research survey",
-        "// confirmed OpenCode plugins live in .opencode/plugins/ and that a",
-        "// `tool.execute.before` hook throwing an Error blocks a tool call, but it did not",
-        "// name a literal session-end event or quote a plugin example -- the event type",
-        '// checked below ("session.idle") is inferred and should be verified against your',
-        "// OpenCode version. Runs `smairt check` (read-only) so findings feed back before",
-        "// the session ends.",
+        "// Generated by `smairt connect opencode`. Runs `smairt hook report` (read-only,",
+        "// always exits 0) when the session goes idle, so findings feed back before the",
+        "// session ends.",
     ]
     if strict:
         lines.append(
-            "// Also blocks tool writes while `smairt check` reports findings "
+            "// Also blocks tool calls while `smairt check` reports findings "
             "(strict_hooks: true in smairt.yaml)."
         )
     lines.append("// Delete this file to disable the wiring.")
@@ -323,17 +366,17 @@ def _render_opencode_plugin(strict: bool) -> str:
     lines.append("    event: async ({ event }: { event: { type: string } }) => {")
     lines.append('      if (event.type === "session.idle") {')
     lines.append("        try {")
-    lines.append('          execSync("smairt check", { stdio: "inherit" });')
+    lines.append('          execSync("smairt hook report", { stdio: "inherit" });')
     lines.append("        } catch {")
-    lines.append("          // smairt check exits non-zero when findings exist; this hook")
-    lines.append("          // only surfaces them here, it never blocks on its own.")
+    lines.append("          // `smairt hook report` exits 0 even with findings; this guards")
+    lines.append("          // only against smairt itself being missing from PATH.")
     lines.append("        }")
     lines.append("      }")
     lines.append("    },")
     if strict:
         lines.append('    "tool.execute.before": async () => {')
         lines.append("      try {")
-        lines.append('        execSync("smairt check --json", { stdio: "ignore" });')
+        lines.append('        execSync("smairt hook gate", { stdio: "ignore" });')
         lines.append("      } catch {")
         lines.append("        throw new Error(")
         lines.append(
@@ -355,6 +398,68 @@ def _connect_opencode(project_root: Path, strict: bool, builder: _ResultBuilder)
     )
 
 
+# --- pi -------------------------------------------------------------------------
+# Verified shape: project-local extensions live in .pi/extensions/*.ts (loaded
+# once the project is trusted) and default-export a factory receiving
+# ExtensionAPI. `agent_end` fires when an agent run ends; a `tool_call` handler
+# blocks a tool call by returning { block: true, reason }. pi reads AGENTS.md
+# natively, so no bridge file is needed.
+
+
+def _render_pi_extension(strict: bool) -> str:
+    """Build the TypeScript source of pi's extension file (a default-export factory)."""
+    lines = [
+        "// Generated by `smairt connect pi`. Runs `smairt hook report` (read-only,",
+        "// always exits 0) when an agent run ends, so findings feed back before the",
+        "// session ends.",
+    ]
+    if strict:
+        lines.append(
+            "// Also blocks edit/write tool calls while `smairt check` reports findings "
+            "(strict_hooks: true in smairt.yaml)."
+        )
+    lines.append("// Delete this file to disable the wiring.")
+    lines.append('import { execSync } from "node:child_process";')
+    lines.append('import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";')
+    lines.append("")
+    lines.append("export default function (pi: ExtensionAPI) {")
+    lines.append('  pi.on("agent_end", async () => {')
+    lines.append("    try {")
+    lines.append('      execSync("smairt hook report", { stdio: "inherit" });')
+    lines.append("    } catch {")
+    lines.append("      // `smairt hook report` exits 0 even with findings; this guards")
+    lines.append("      // only against smairt itself being missing from PATH.")
+    lines.append("    }")
+    lines.append("  });")
+    if strict:
+        lines.append('  pi.on("tool_call", async (event: { toolName: string }) => {')
+        lines.append('    if (event.toolName !== "edit" && event.toolName !== "write") {')
+        lines.append("      return;")
+        lines.append("    }")
+        lines.append("    try {")
+        lines.append('      execSync("smairt hook gate", { stdio: "ignore" });')
+        lines.append("    } catch {")
+        lines.append("      return {")
+        lines.append("        block: true,")
+        lines.append("        reason:")
+        lines.append(
+            '          "smairt check found findings; run `smairt check` and fix them before '
+            'writing further.",'
+        )
+        lines.append("      };")
+        lines.append("    }")
+        lines.append("  });")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _connect_pi(project_root: Path, strict: bool, builder: _ResultBuilder) -> None:
+    """Write pi's one wiring file: its project-local extension."""
+    _write_or_warn(
+        project_root, ".pi/extensions/smairt-check.ts", _render_pi_extension(strict), builder
+    )
+
+
 # --- Gemini CLI -----------------------------------------------------------------
 # The research file documents context.fileName as a real Gemini CLI setting (its own
 # docs example already lists "AGENTS.md") and BeforeTool/SessionStart/End as real
@@ -367,9 +472,9 @@ def _connect_opencode(project_root: Path, strict: bool, builder: _ResultBuilder)
 
 def _gemini_desired_hooks(strict: bool) -> dict[str, Any]:
     """The hook entries we'd like present in Gemini CLI's settings (before merging)."""
-    hooks: dict[str, Any] = {"SessionEnd": [{"command": "smairt check"}]}
+    hooks: dict[str, Any] = {"SessionEnd": [{"command": "smairt hook report"}]}
     if strict:
-        hooks["BeforeTool"] = [{"command": "smairt check --json"}]
+        hooks["BeforeTool"] = [{"command": "smairt hook gate"}]
     return hooks
 
 
@@ -382,8 +487,8 @@ def _gemini_comment(strict: bool) -> str:
         "section: the research survey confirmed the BeforeTool/SessionEnd hook event "
         "names and that hooks live in this file, but did not capture a literal hooks "
         "entry example -- the shape below is inferred and should be verified against "
-        "your Gemini CLI version. The SessionEnd hook runs `smairt check` (read-only) "
-        "so findings feed back before the session ends."
+        "your Gemini CLI version. The SessionEnd hook runs `smairt hook report` "
+        "(read-only, always exits 0) so findings feed back before the session ends."
     )
     if strict:
         notice += (
@@ -509,6 +614,7 @@ _HARNESS_HANDLERS: dict[Harness, Callable[[Path, bool, _ResultBuilder], None]] =
     Harness.opencode: _connect_opencode,
     Harness.gemini_cli: _connect_gemini,
     Harness.cursor: _connect_cursor,
+    Harness.pi: _connect_pi,
 }
 
 

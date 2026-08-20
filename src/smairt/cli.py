@@ -263,6 +263,40 @@ def check(
 
 
 @app.command()
+def hook(
+    mode: str = typer.Argument(
+        ...,
+        help=(
+            "'report' prints findings and always exits 0; "
+            "'gate' exits 2 while findings exist (the block code harness hooks understand)."
+        ),
+    ),
+) -> None:
+    """Run `smairt check` speaking a harness hook's exit-code protocol.
+
+    Generated hook configs (see ``smairt connect``) call this instead of
+    ``smairt check`` directly, because the raw check exits 1 on findings and
+    hook protocols give exit codes different meanings: Claude Code, Codex, and
+    Cursor all treat exit 2 as "block this action and feed stderr back to the
+    agent", while exit 1 is a plain non-blocking error. ``gate`` speaks that
+    blocking dialect; ``report`` is for session-end hooks that should surface
+    findings without ever wedging the harness in a failure loop.
+    """
+    if mode not in ("report", "gate"):
+        _fail("hook", f"unknown mode {mode!r}. Choices: report, gate.")
+    root = _require_project_root("hook")
+    report = check_module.run_checks(root)
+    if mode == "report":
+        typer.echo(check_module.render_human(report))
+        raise typer.Exit(code=0)
+    if report.exit_code == 0:
+        raise typer.Exit(code=0)
+    # Findings exist: block. Stderr is what blocking harnesses relay to the agent.
+    typer.echo(check_module.render_human(report), err=True)
+    raise typer.Exit(code=2)
+
+
+@app.command()
 def status(
     json_output: bool = typer.Option(
         False, "--json", help="Emit machine-readable JSON instead of human-readable text."
@@ -300,7 +334,7 @@ def connect(
     harness: str | None = typer.Argument(
         None,
         help=(
-            "Harness to wire up (claude-code, codex, opencode, gemini-cli, cursor), "
+            "Harness to wire up (claude-code, codex, opencode, gemini-cli, cursor, pi), "
             "or 'ci' for the GitHub Actions template."
         ),
     ),
@@ -318,7 +352,7 @@ def connect(
     if harness is None:
         _fail(
             "connect",
-            "a harness is required (claude-code, codex, opencode, gemini-cli, cursor), "
+            "a harness is required (claude-code, codex, opencode, gemini-cli, cursor, pi), "
             "or pass --ci.",
         )
 

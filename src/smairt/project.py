@@ -43,6 +43,7 @@ class Harness(str, Enum):
     opencode = "opencode"
     gemini_cli = "gemini-cli"
     cursor = "cursor"
+    pi = "pi"
     none = "none"
 
 

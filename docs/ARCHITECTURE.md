@@ -35,7 +35,9 @@ Researcher / assistant harness
    - `units.py` — `smairt unit new`, creating one stage or question folder.
    - `check.py` — `smairt check`, the eight rules that audit a project's state.
    - `status.py` — `smairt status`, orientation (reuses `check.py`'s rules).
-   - `connect.py` — `smairt connect`, wiring an assistant harness's hooks.
+   - `connect.py` — `smairt connect`, wiring an assistant harness's hooks
+     (`smairt hook`, the exit-code adapter those hooks call, lives in
+     `cli.py` since it is just `check.py` behind a different exit protocol).
    - `adopt.py` — `smairt adopt`, wrapping a pre-existing project.
    - `index.py` — `smairt index`, regenerating `results/INDEX.md`.
 3. **Shared plumbing** has no command of its own; every module above leans on
@@ -67,6 +69,13 @@ everything into one `CheckReport`. `cli.py`'s `check` command calls
 (machine-readable), and exits with `report.exit_code` — 1 if there are any
 findings, 0 otherwise. `smairt status` reuses `run_checks()` directly rather
 than re-implementing any of this.
+
+Harness hooks reach the same rules through `smairt hook` (also in `cli.py`):
+`report` prints findings and always exits 0 (safe for session-end hooks),
+`gate` exits 2 while findings exist — the block code Claude Code, Codex, and
+Cursor hooks all understand, where a bare exit 1 would read as a non-blocking
+error. The files `smairt connect` generates call these two modes rather than
+`smairt check` directly.
 
 ## Adding things
 
