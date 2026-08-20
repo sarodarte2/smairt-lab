@@ -47,7 +47,9 @@ must resolve to a real path; `smairt check` verifies this.
 Raw logs, once written, are never edited again. Every claim under "What it
 means" points at the log (or figure) that backs it — no unsourced claims.
 Data files carry a short provenance note: where they came from, when, what
-was already done to them before they landed in `data/`.
+was already done to them before they landed in `data/`. Record where a
+dataset's bytes physically live with `smairt data new`/`smairt data
+locate` — never a new convention of your own.
 
 ## The loop
 

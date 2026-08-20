@@ -21,6 +21,7 @@ from smairt.check import (
     RULE_RECEIPT_COMPLETENESS,
     RULE_STATUS_DRIFT,
     RULE_STRUCTURE_DRIFT,
+    SUGGEST_DATASET_LOCATIONS,
     SUGGEST_GIT_UNAVAILABLE,
     SUGGEST_GROUPING,
     SUGGEST_HPC,
@@ -29,6 +30,7 @@ from smairt.check import (
     run_checks,
     to_json,
 )
+from smairt.data import create_dataset
 from smairt.project import Harness, create_project
 from smairt.units import create_question, create_stage
 
@@ -457,6 +459,61 @@ def test_rule8_suggests_paper_overlay_when_status_mentions_paper_words(tmp_path:
 
     assert report.findings == ()
     assert any(s.id == SUGGEST_PAPER_OVERLAY for s in report.suggestions)
+
+
+def test_rule8_suggests_dataset_locations_for_a_data_subfolder_with_no_readme(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    (root / "data" / "handmade").mkdir()
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+    assert any(s.id == SUGGEST_DATASET_LOCATIONS for s in report.suggestions)
+
+
+def test_rule8_suggests_dataset_locations_for_a_readme_with_no_locations_field(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    handmade = root / "data" / "handmade"
+    handmade.mkdir()
+    (handmade / "README.md").write_text(
+        frontmatter.render({"dataset": "handmade"}) + "\nNo locations recorded.\n",
+        encoding="utf-8",
+    )
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+    assert any(s.id == SUGGEST_DATASET_LOCATIONS for s in report.suggestions)
+
+
+def test_rule8_does_not_suggest_dataset_locations_for_a_dataset_created_by_smairt_data_new(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    create_dataset(root, "Reads")
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+    assert not any(s.id == SUGGEST_DATASET_LOCATIONS for s in report.suggestions)
+
+
+def test_freshly_created_dataset_leaves_smairt_check_completely_clean(tmp_path: Path) -> None:
+    # SUGGEST_GIT_UNAVAILABLE still fires here (create_project alone, unlike `smairt
+    # new`, never runs `git init`) -- that suggestion is orthogonal to this feature.
+    # What this test actually confirms is the SMAIRT105 acceptance criterion: a
+    # dataset made via `smairt data new` is never itself flagged as missing locations.
+    root = _project(tmp_path)
+    create_dataset(root, "Reads")
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+    assert not any(s.id == SUGGEST_DATASET_LOCATIONS for s in report.suggestions)
 
 
 # --- output rendering --------------------------------------------------------------

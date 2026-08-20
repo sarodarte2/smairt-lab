@@ -49,6 +49,8 @@ Advisory suggestions (a separate channel; never affect the exit code)::
                grouping subfolder may be earned.
     SMAIRT104  STATUS.md mentions paper/manuscript/figure-legend work: a
                pointer to the (deferred) Paper overlay.
+    SMAIRT105  A data/<x>/ subfolder exists with no README, or a README with
+               no locations: entry recorded -- one note, not per-dataset.
 
 Judgment calls a reviewer should know about
 --------------------------------------------
@@ -66,7 +68,11 @@ Judgment calls a reviewer should know about
   matching the day-granularity the frontmatter schemas already use.
 * Rule 8's growth suggestions each fire at most once per run (naming the
   first offending unit, not every one) — they are prompts to notice a
-  pattern, not a per-file audit.
+  pattern, not a per-file audit. SMAIRT105 (dataset locations) follows the
+  same convention, naming the first data/<x>/ subfolder missing a recorded
+  location rather than every one — a project can accumulate many datasets,
+  and one nudge is enough to send a researcher to `smairt data list` to see
+  the rest, rather than flooding `smairt check`'s output per dataset.
 * Rule SMAIRT002's ``paths:`` field (case 3, spec Part II: reference units)
   resolves relative to the PROJECT ROOT, not the unit folder — it names
   pre-existing paths elsewhere in the tree. Every other pointer field
@@ -108,6 +114,7 @@ SUGGEST_GIT_UNAVAILABLE = "SMAIRT101"
 SUGGEST_HPC = "SMAIRT102"
 SUGGEST_GROUPING = "SMAIRT103"
 SUGGEST_PAPER_OVERLAY = "SMAIRT104"
+SUGGEST_DATASET_LOCATIONS = "SMAIRT105"
 
 _POINTER_FIELDS = ("script", "log", "outputs", "paths")
 _KNOWN_TOP_LEVEL_DIRS = frozenset(
@@ -281,6 +288,7 @@ def run_checks(project_root: Path) -> CheckReport:
     suggestions += _suggest_hpc(project_root, units)
     suggestions += _suggest_grouping(units)
     suggestions += _suggest_paper_overlay(project_root)
+    suggestions += _suggest_dataset_locations(project_root)
 
     return CheckReport(findings=tuple(findings), suggestions=tuple(suggestions))
 
@@ -868,6 +876,55 @@ def _suggest_paper_overlay(project_root: Path) -> list[Suggestion]:
                 "deferred future capability, not yet supported.",
             )
         ]
+    return []
+
+
+def _dataset_missing_locations(dataset_dir: Path) -> bool:
+    """Does this ``data/<x>/`` folder lack a usable ``locations:`` record?
+
+    True when there is no ``README.md`` at all, the README has no
+    frontmatter block, or its frontmatter has a ``locations:`` field that is
+    missing, not a list, or an empty list — any of these means `smairt data
+    list` would report zero locations for this dataset, i.e. nobody has
+    written down where its bytes actually are.
+    """
+    readme = dataset_dir / "README.md"
+    if not readme.is_file():
+        return True
+    try:
+        fields, _body = frontmatter.read(readme)
+    except frontmatter.FrontmatterError:
+        return True
+    locations = fields.get("locations")
+    return not isinstance(locations, list) or not locations
+
+
+def _suggest_dataset_locations(project_root: Path) -> list[Suggestion]:
+    """Advisory SMAIRT105: nudge toward recording where a dataset's bytes live.
+
+    Stops at the first ``data/<x>/`` subfolder with no usable ``locations:``
+    record (see :func:`_dataset_missing_locations`) — like the rest of rule
+    8, this is a "notice the pattern" prompt (point at `smairt data list` /
+    `smairt data new` / `smairt data locate`), not a per-dataset audit; see
+    the module docstring's "Judgment calls" section for why once-per-run was
+    chosen over once-per-dataset.
+    """
+    data_dir = project_root / "data"
+    if not data_dir.is_dir():
+        return []
+    for entry in sorted(data_dir.iterdir(), key=lambda item: item.name):
+        if not entry.is_dir():
+            continue
+        if _dataset_missing_locations(entry):
+            return [
+                Suggestion(
+                    SUGGEST_DATASET_LOCATIONS,
+                    f"data/{entry.name}",
+                    "has no recorded locations: entry; run `smairt data new` (if this "
+                    "isn't a dataset yet) or `smairt data locate` to record where its "
+                    "bytes actually live.",
+                )
+            ]
     return []
 
 

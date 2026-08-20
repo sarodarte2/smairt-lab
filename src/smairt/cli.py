@@ -29,6 +29,7 @@ from smairt import __version__
 from smairt import adopt as adopt_module
 from smairt import check as check_module
 from smairt import connect as connect_module
+from smairt import data as data_module
 from smairt import index as index_module
 from smairt import project as project_module
 from smairt import status as status_module
@@ -497,6 +498,111 @@ def unit_new(
         _fail("unit new", str(error))
 
     typer.echo(f"Created {unit_dir.relative_to(root)}")
+
+
+data_app = typer.Typer(no_args_is_help=True, help="Record where each dataset physically lives.")
+app.add_typer(data_app, name="data")
+
+
+def _parse_hpc_location(value: str, note: str | None) -> data_module.Location:
+    """Parse a ``--hpc HOST:PATH`` flag into a :class:`~smairt.data.Location`.
+
+    Fails cleanly (a plain ``ValueError``, not an unhandled ``IndexError``
+    from a bad ``.split()``) when ``value`` has no ``:`` separator at all.
+    """
+    if ":" not in value:
+        raise ValueError(f"--hpc expects HOST:PATH (got {value!r}, with no ':')")
+    host, path = value.split(":", 1)
+    if not host.strip() or not path.strip():
+        raise ValueError(f"--hpc expects HOST:PATH, both non-empty (got {value!r})")
+    return data_module.Location(kind="hpc", host=host, path=path, note=note)
+
+
+def _collect_new_locations(
+    hpc: list[str], url: list[str], local: list[str], note: str | None
+) -> list[data_module.Location]:
+    """Turn ``data new``'s repeatable location flags into a list of :class:`~smairt.data.Location`.
+
+    ``--note`` is not repeatable, so if it is given alongside more than one
+    location flag it is applied to every location created in this one call
+    -- a deliberate simplification for the common case (one dataset, one
+    note about how it was obtained), not per-location notes.
+    """
+    locations: list[data_module.Location] = []
+    for value in hpc:
+        locations.append(_parse_hpc_location(value, note))
+    for value in url:
+        locations.append(data_module.Location(kind="url", path=value, note=note))
+    for value in local:
+        locations.append(data_module.Location(kind="local", path=value, note=note))
+    return locations
+
+
+@data_app.command("new")
+def data_new(
+    name: str = typer.Argument(..., help="Dataset name; slugified into data/<slug>/."),
+    hpc: list[str] = typer.Option([], "--hpc", help="An HPC location, as HOST:PATH (repeatable)."),
+    url: list[str] = typer.Option([], "--url", help="A download-source URL (repeatable)."),
+    local: list[str] = typer.Option(
+        [], "--local", help="An additional local path, beyond the dataset folder (repeatable)."
+    ),
+    note: str | None = typer.Option(
+        None, "--note", help="Note applied to every location passed above."
+    ),
+) -> None:
+    """Create data/<slug>/README.md, recording where this dataset's bytes live."""
+    root = _require_project_root("data new")
+    try:
+        locations = _collect_new_locations(hpc, url, local, note)
+        dataset_dir = data_module.create_dataset(root, name, locations=locations)
+    except (PathExistsError, ValueError) as error:
+        _fail("data new", str(error))
+
+    typer.echo(f"Created {dataset_dir.relative_to(root)}")
+
+
+@data_app.command("locate")
+def data_locate(
+    name: str = typer.Argument(..., help="Dataset name (as passed to `smairt data new`)."),
+    hpc: str | None = typer.Option(None, "--hpc", help="An HPC location, as HOST:PATH."),
+    url: str | None = typer.Option(None, "--url", help="A download-source URL."),
+    local: str | None = typer.Option(None, "--local", help="A local path."),
+    note: str | None = typer.Option(None, "--note", help="Optional note for this location."),
+) -> None:
+    """Add one location to an existing dataset's README frontmatter."""
+    root = _require_project_root("data locate")
+    given = [value for value in (hpc, url, local) if value is not None]
+    if len(given) != 1:
+        _fail("data locate", "exactly one of --hpc, --url, --local is required.")
+
+    try:
+        if hpc is not None:
+            location = _parse_hpc_location(hpc, note)
+        elif url is not None:
+            location = data_module.Location(kind="url", path=url, note=note)
+        else:
+            assert local is not None
+            location = data_module.Location(kind="local", path=local, note=note)
+        dataset_dir = data_module.add_location(root, name, location)
+    except ValueError as error:
+        _fail("data locate", str(error))
+
+    typer.echo(f"Updated {dataset_dir.relative_to(root)}/README.md")
+
+
+@data_app.command("list")
+def data_list(
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON instead of human-readable text."
+    ),
+) -> None:
+    """List every dataset under data/ and every location recorded for it."""
+    root = _require_project_root("data list")
+    report = data_module.list_locations(root)
+    if json_output:
+        typer.echo(json.dumps(data_module.to_json(report), indent=2))
+    else:
+        typer.echo(data_module.render_human(report))
 
 
 @app.command()

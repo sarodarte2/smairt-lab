@@ -20,7 +20,7 @@ Researcher / assistant harness
    smairt <command>          <- src/smairt/cli.py
         |
    one module per command    <- project.py / units.py / check.py / status.py /
-        |                        connect.py / adopt.py / index.py
+        |                        connect.py / adopt.py / index.py / data.py
         v
    shared plumbing           <- frontmatter.py / fsutil.py / text.py / models.py
 ```
@@ -40,6 +40,7 @@ Researcher / assistant harness
      `cli.py` since it is just `check.py` behind a different exit protocol).
    - `adopt.py` — `smairt adopt`, wrapping a pre-existing project.
    - `index.py` — `smairt index`, regenerating `results/INDEX.md`.
+   - `data.py` — `smairt data`, recording where each dataset's bytes live.
 3. **Shared plumbing** has no command of its own; every module above leans on
    it. `frontmatter.py` reads/writes the `---` YAML block at the top of a
    README. `fsutil.py` holds the two file-writing policies (`write_once` /
