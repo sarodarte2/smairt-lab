@@ -90,6 +90,8 @@ Verified against the `v2-rebuild` working tree:
 
 - [Deliver the skills through `smairt connect`](issues/09-deliver-skills-through-connect.md) — one `_install_skills()` helper on the existing dispatch, two paths (`.claude/skills/` for Claude Code, `.agents/skills/` for the other five), copied not referenced, with a provenance notice that never names a harness so the shared root stays byte-identical and idempotent. ADR 0004 records it. **Codex's documented policy file was found to remove the skill entirely rather than only stop auto-invocation (reproduced independently against codex-cli 0.146.0) and is deliberately not written** — `smairt-adversarial-review` is explicit-invocation-only, so that file would delete the mechanism, not enforce it. Enforcement is real on Claude Code, Cursor, and pi; prose elsewhere.
 
+- [The sidequest and unit lineage](issues/01-sidequest-lineage.md) — a sidequest is an ordinary question unit carrying `prompted_by:` (child→parent, set by `--from` at creation), not a new unit kind. The boundary is the **hypothesis test**: a finding stays inside until you can state a new testable claim in one line — chosen over "needs its own run", which is silent exactly where HARKing lives (a new claim formed from data already in hand). `AGENTS.md` states a verdict answers its own `hypothesis:` and nothing else; `smairt check` errors on a *dangling* `prompted_by:` but never requires the field. `results/INDEX.md` nests prompted questions under their origin; `smairt status` deliberately does not. Glossary gains a relationship, not a noun.
+
 ## Not yet specified
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats
