@@ -1,7 +1,7 @@
 # Rewrite CONTEXT.md in the vocabulary the tool actually uses
 
 Type: task
-Status: open
+Status: resolved
 
 ## Question
 
@@ -40,3 +40,43 @@ domain-modeling, write it into `CONTEXT.md` as they resolve. This ticket is not
 blocked on them — it removes the v1 vocabulary and establishes the v2 baseline —
 but whoever runs it should re-read `CONTEXT.md` first in case those terms have
 already landed, and must not clobber them.
+
+## Answer
+
+Rewritten. 25 terms, all sourced from the v2 code rather than reworded from the
+dead glossary: Unit, Stage, Question, Reference unit, Spine, Hypothesis, Analysis
+plan, Prompted by, Verdict, Receipt, Evidence pointer, Frontmatter, Finding,
+Suggestion, Rule, Contract, Harness, Harness wiring, Bridge file, Skill, Dataset,
+Dataset location, Adoption, Project root, Golden fixture.
+
+Zero occurrences remain of *screen*, *palette*, *blueprint*, *capability*, or
+*phase*. The `Analysis plan` and `Prompted by` rows survived verbatim, as
+required — only their position changed.
+
+**Core Relationships and Invariants dropped, not re-derived.** Both were
+spec-shaped assertions rather than definitions, and domain-modeling is explicit
+that `CONTEXT.md` is a glossary and nothing else. Re-deriving v2 equivalents
+would create a second, informal description of what `docs/ARCHITECTURE.md` and
+each module docstring already state authoritatively — a second source of truth
+that drifts. Agreed.
+
+**`Contract` added** beyond the ticket's list: the code uses it pervasively
+(`check.py`'s "the state contract", `connect.py`'s "the one contract — AGENTS.md")
+and both Harness wiring and Adoption needed to reference it.
+
+### Two accuracy fixes on review
+
+1. **`Rule` claimed there were ten**, covering only `SMAIRT001`–`SMAIRT010`. The
+   advisory rules `SMAIRT101`–`SMAIRT105` are rules too — `check.py`'s own section
+   headers number them alongside the rest. Rewritten to cover both channels and
+   to state that the rule, not each way of violating it, is the unit of identity.
+2. **`Evidence pointer` read "Unresolved once a unit is closed"**, which doesn't
+   parse and inverts the actual behavior. Rewritten to the real rule: a closed
+   unit is held to the strict reading (file exists, `script:`/`log:` non-blank);
+   an open unit's not-yet-run `log:` counts as resolved while its folder exists,
+   which is what lets a fresh question pass. Also added the genuine gotcha that
+   `paths:` resolves from the project root while every other pointer resolves
+   from the unit folder.
+
+The `smairt data locate` idempotency claim was checked against `add_location`
+rather than taken on trust — accurate.
