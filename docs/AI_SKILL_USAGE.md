@@ -9,12 +9,16 @@ reference that contract; they don't restate it.
 
 ## Available Skills
 
+- `skills/smairt-new-project/` — interview a researcher and scaffold a new
+  project, fully-flagged.
 - `skills/smairt-orient/` — join or resume a session from derived state.
 - `skills/smairt-new-question/` — start an exploratory probe.
 - `skills/smairt-new-stage/` — add a step to the spine.
 - `skills/smairt-close-question/` — record what happened, what it means,
   and a verdict.
 - `skills/smairt-fork/` — record alternatives, contained or propagating.
+- `skills/smairt-adopt/` — walk a pre-existing project's folders after
+  `smairt adopt` and propose reference units, one approval at a time.
 - `skills/smairt-adversarial-review/` — researcher-invoked, argues against
   the current interpretation from the units' own evidence.
 

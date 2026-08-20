@@ -135,6 +135,36 @@ def test_new_prompts_only_for_missing_fields(
     assert (tmp_path / "prompted_project" / "smairt.yaml").is_file()
 
 
+def test_new_reprompts_with_a_friendly_message_on_an_invalid_harness_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["new", "--name", "Prompted Project", "--path", str(tmp_path)],
+        input="Ada Lovelace\nA project created via prompts.\nnotaharness\nclaude-code\nn\nn\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "isn't one of the choices above" in result.output
+    assert (tmp_path / "prompted_project" / "smairt.yaml").is_file()
+
+
+def test_adopt_prompts_only_for_missing_fields(tmp_path: Path) -> None:
+    root = tmp_path / "existing_project"
+    root.mkdir()
+    (root / "README.md").write_text("# Existing project\n\nPre-SMAIRT notes.\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["adopt", "--name", "Adopted Project", "--path", str(root)],
+        input="Ada Lovelace\nA project adopted via prompts.\nclaude-code\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (root / "smairt.yaml").is_file()
+
+
 def _check_project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     create_project(

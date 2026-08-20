@@ -103,6 +103,57 @@ def _require_project_root(command: str) -> Path:
     return root
 
 
+def _prompt_harness(default: Harness = Harness.claude_code) -> Harness:
+    """Prompt for a harness as a numbered choice, re-prompting on a bad answer.
+
+    Accepts either the number or the exact name (``2`` or ``codex``) and
+    never lets a typo escape as a raw ``ValueError`` traceback — the one real
+    defect in the free-text prompt this replaced. Still a plain
+    :func:`typer.prompt` underneath, so piped stdin keeps working the same
+    way it always has.
+    """
+    members = list(Harness)
+    typer.secho("Harness:", fg=typer.colors.CYAN, bold=True)
+    for index, member in enumerate(members, start=1):
+        marker = " (default)" if member is default else ""
+        typer.echo(f"  {index}. {member.value}{marker}")
+    while True:
+        answer = typer.prompt("Choice (number or name)", default=default.value).strip()
+        if answer.isdigit():
+            position = int(answer)
+            if 1 <= position <= len(members):
+                return members[position - 1]
+        else:
+            try:
+                return Harness(answer)
+            except ValueError:
+                pass
+        typer.echo(f"'{answer}' isn't one of the choices above — try a number or an exact name.")
+
+
+def _prompt_missing_identity(
+    name: str | None,
+    researcher: str | None,
+    description: str | None,
+    harness: Harness | None,
+) -> tuple[str, str, str, Harness]:
+    """Prompt for whichever of name/researcher/description/harness is still ``None``.
+
+    Shared by ``new`` and ``adopt`` so the identity prompts — including the
+    harness choice — are worded identically no matter which command
+    triggered them.
+    """
+    if name is None:
+        name = typer.prompt("Project name")
+    if researcher is None:
+        researcher = typer.prompt("Researcher")
+    if description is None:
+        description = typer.prompt("One-line description")
+    if harness is None:
+        harness = _prompt_harness()
+    return name, researcher, description, harness
+
+
 @app.command()
 def new(
     name: str | None = typer.Option(None, "--name", help="Project name."),
@@ -124,15 +175,9 @@ def new(
     ),
 ) -> None:
     """Create a new SMAIRT project: the ten-item day-one scaffold."""
-    if name is None:
-        name = typer.prompt("Project name")
-    if researcher is None:
-        researcher = typer.prompt("Researcher")
-    if description is None:
-        description = typer.prompt("One-line description")
-    if harness is None:
-        choices = ", ".join(member.value for member in Harness)
-        harness = Harness(typer.prompt(f"Harness ({choices})", default=Harness.claude_code.value))
+    name, researcher, description, harness = _prompt_missing_identity(
+        name, researcher, description, harness
+    )
     if hpc is None:
         hpc = typer.confirm("Expect to run on HPC/SLURM?", default=False)
     if paper is None:
@@ -152,7 +197,7 @@ def new(
     except (PathExistsError, ValueError) as error:
         _fail("new", str(error))
 
-    typer.echo(f"Created {root}")
+    typer.secho(f"Created {root}", fg=typer.colors.GREEN, bold=True)
     if harness is not Harness.none:
         result = connect_module.connect(root, harness, strict=False)
         _report_connect(result)
@@ -173,15 +218,9 @@ def adopt(
     ),
 ) -> None:
     """Adopt a pre-existing directory: lay the contract files around it, move nothing."""
-    if name is None:
-        name = typer.prompt("Project name")
-    if researcher is None:
-        researcher = typer.prompt("Researcher")
-    if description is None:
-        description = typer.prompt("One-line description")
-    if harness is None:
-        choices = ", ".join(member.value for member in Harness)
-        harness = Harness(typer.prompt(f"Harness ({choices})", default=Harness.claude_code.value))
+    name, researcher, description, harness = _prompt_missing_identity(
+        name, researcher, description, harness
+    )
 
     root = path or Path.cwd()
     try:

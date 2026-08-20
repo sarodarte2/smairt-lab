@@ -362,3 +362,31 @@ work restarted fresh in the new shape. Watch for: STATUS drift warnings firing u
 naggingly); whether the spine/question split fits daily reality; whether stakes labels reduce or
 merely relabel approval load; any DE-shaped assumption that fails other work shapes. Findings feed
 the PNNL-gate revision.
+
+## Post-spec addendum — `smairt-new-project` skill + prompt polish
+
+**Decision (approved in conversation).** Minute zero in a terminal is the scariest moment for a
+non-computational researcher, and the V2 rebuild shipped seven skills but none for project
+*creation* — the least computational user met the least friendly surface first. Closed that gap two
+ways: (a) a `smairt-new-project` skill so the AI assistant *is* the wizard — it interviews in plain
+language, then runs `smairt new` fully-flagged, never surfacing a raw prompt; (b) polished `smairt
+new`'s interactive prompts, whose one real defect was the harness prompt (free-text `typer.prompt`,
+a typo raising an unhandled `ValueError` traceback).
+
+**Evidence.** PNNL peers who tried the old cookiecutter flow found it hard; the same peers found the
+(now-removed) TUI wizard easier going. That's a signal about interview-style guidance, not a vote for
+a TUI as such — the skill supplies the interview, the CLI stays plain.
+
+**No-widget constraint, reading.** WP1 (Part II above) mandates "plain prompts, no TUI" and complete
+non-interactive flags. Read literally, that rules out `questionary`-style arrow-key widgets (a new
+dependency, weak type stubs under `mypy strict`, TTY coupling, and tension with the spec's own
+wording) — not a numbered choice printed as plain text and answered on stdin. The harness prompt
+became a validated numbered choice (pick by number or exact name, friendly re-prompt on a bad
+answer, light `typer.secho` color that is never the only signal) using only what `typer` already
+bundles.
+
+**Deferred.** Two options considered and set aside, to revisit only if stress-test or further PNNL
+evidence demands it: `smairt status --html`, and any web UI.
+
+**Recorded gap.** Skill *distribution* — skills aren't packaged in the wheel; installation is manual
+per `docs/AI_SKILL_USAGE.md`. Out of scope here; it's the PNNL-sharing gate's problem (see Part IV).
