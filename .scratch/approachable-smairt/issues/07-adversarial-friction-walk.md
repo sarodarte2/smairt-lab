@@ -1,7 +1,7 @@
 # Adversarial friction walk
 
 Type: task
-Status: open
+Status: resolved
 
 ## Question
 
@@ -62,3 +62,38 @@ written for.
 
 Output the inventory as `.scratch/approachable-smairt/research/07-friction-inventory.md`
 and link it from the resolution.
+
+## Answer
+
+Walk complete against an installed `smairt 0.4.0` (`uv tool install --force .`,
+not `uv run`). Inventory at
+[research/07-friction-inventory.md](../research/07-friction-inventory.md):
+**13 findings — 3 crash root causes (5 reproductions), 2 wrong-result defects,
+3 confusing messages, 5 design gaps.**
+
+The three worst, all verified independently by the main session:
+
+1. **Malformed YAML inside a well-formed frontmatter block** — an unclosed
+   `tags: [`, exactly the mistake a scientist hand-editing a README makes —
+   crashed `check`, `status`, and `index` with a raw `yaml.parser.ParserError`.
+   `smairt check`'s entire job is reporting frontmatter problems as findings, and
+   it crashed on one instead, exiting 1: indistinguishable from a legitimate
+   "findings exist" exit.
+2. **A README with no frontmatter** crashed `status` and `index` while `check`
+   handled the identical file cleanly — three commands disagreeing about one file.
+3. **An absolute path in `--ref`/`paths:` passed `check` clean** if it existed
+   anywhere on the machine (verified with `/etc/hosts`) — silent wrongness, worse
+   than a crash, and a direct violation of the project-root contract.
+
+**Nothing leaked outside the project root.** `$HOME` was diffed before and after
+connecting all six harnesses plus `--ci`; the README's project-scoping claim held
+under direct test.
+
+**The `prompted_by:` cycle guard works.** A hand-made 6-node cycle did not hang
+`index`, verified under a hard timeout — the defensive code written in ticket 10
+earned its place on its first real adversarial contact.
+
+The walk also recorded what worked *well* — collision safety, `adopt`'s errors,
+Git nesting detection, `--hpc HOST:PATH` validation, `connect` idempotency and
+never-clobbering, and the SMAIRT008/009/010 messages — specifically so
+[ticket 08](08-fix-the-friction.md) could not fix them away.

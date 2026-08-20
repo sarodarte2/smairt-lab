@@ -114,6 +114,25 @@ def test_rule1_malformed_frontmatter_is_flagged(tmp_path: Path) -> None:
     assert {f.id for f in report.findings} == {RULE_FRONTMATTER}
 
 
+def test_rule1_yaml_broken_inside_a_well_formed_block_is_flagged_not_a_crash(
+    tmp_path: Path,
+) -> None:
+    """Regression for the walk's worst finding: an unclosed `tags: [` list inside
+    an otherwise well-formed `---` block used to crash `check` (and `status`/
+    `index`) with a raw `yaml.parser.ParserError`. It must become an ordinary
+    SMAIRT001 finding instead, the same as any other malformed frontmatter."""
+    root = _project(tmp_path)
+    stage = create_stage(root, "Alignment", created=date.today())
+    (stage / "README.md").write_text(
+        "---\nkind: stage\ntitle: Alignment\ntags: [unterminated list\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_FRONTMATTER}
+
+
 def test_rule1_illegal_status_is_flagged(tmp_path: Path) -> None:
     root = _project(tmp_path)
     stage = create_stage(root, "Alignment", created=date.today())
@@ -208,6 +227,23 @@ def test_rule2_reference_unit_broken_path_is_flagged(tmp_path: Path) -> None:
     assert {f.id for f in report.findings} == {RULE_EVIDENCE_POINTERS}
     finding = report.findings[0]
     assert "does_not_exist_anywhere" in finding.message
+
+
+def test_rule2_absolute_path_in_paths_does_not_silently_resolve(tmp_path: Path) -> None:
+    """Regression: `Path("/project") / "/etc/hosts"` evaluates to `Path("/etc/hosts")` --
+    pathlib discards the left side of a join when the right side is absolute. An
+    absolute `--ref`/`paths:` value that happens to exist somewhere on the machine
+    used to pass `smairt check` clean, defeating the documented "paths: resolves
+    from the project root" contract with no warning at all."""
+    root = _project(tmp_path)
+    outside = tmp_path / "outside_the_project.txt"
+    outside.write_text("not part of the project\n", encoding="utf-8")
+    create_question(root, "Escaping ref", ref_paths=[str(outside)], created=date.today())
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_EVIDENCE_POINTERS}
+    assert str(outside) in report.findings[0].message
 
 
 def test_rule2_reference_stage_paths_resolve_against_project_root(tmp_path: Path) -> None:
@@ -469,6 +505,25 @@ def test_rule8_dangling_prompted_by_is_flagged(tmp_path: Path) -> None:
     assert "2020-01-01_does-not-exist" in finding.message
 
 
+def test_rule8_absolute_prompted_by_does_not_silently_resolve(tmp_path: Path) -> None:
+    """Same pathlib-join escape as rule 2's absolute `paths:` case (see
+    test_rule2_absolute_path_in_paths_does_not_silently_resolve), applied to
+    `prompted_by:` -- an absolute value must never be treated as resolved,
+    even if it happens to name something real on the machine."""
+    root = _project(tmp_path)
+    question = create_question(
+        root,
+        "Why is signal low",
+        hypothesis="Signal is low because of a batch effect.",
+        created=date.today(),
+    )
+    _set_fields(question / "README.md", prompted_by=str(tmp_path))
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_PROMPTED_BY}
+
+
 def test_rule8_prompted_by_resolving_to_a_real_unit_is_not_flagged(tmp_path: Path) -> None:
     root = _project(tmp_path)
     origin = create_question(
@@ -586,6 +641,40 @@ def test_rule10_closed_question_with_empty_analysis_plan_is_flagged(tmp_path: Pa
     report = run_checks(root)
 
     assert {f.id for f in report.findings} == {RULE_ANALYSIS_PLAN}
+
+
+def test_rule10_renamed_analysis_plan_heading_gets_a_different_message_than_empty(
+    tmp_path: Path,
+) -> None:
+    """Regression: a hand-renamed '## Analysis plan' heading (with real content
+    underneath) used to get the exact same "requires a non-empty ... section"
+    message a genuinely empty section gets -- actively misleading, since the
+    researcher can see their own paragraph right there. The two cases must
+    read differently: "no such heading" vs. "heading found, body empty"."""
+    root = _project(tmp_path)
+    question = create_question(
+        root, "Does X help?", hypothesis="X improves the outcome.", created=date.today()
+    )
+    fields, body = frontmatter.read(question / "README.md")
+    log_rel = str(fields["log"])
+    (question / log_rel).write_text("log\n", encoding="utf-8")
+    fields["status"] = "supported"
+    fields["script"] = "out"
+    fields["verdict"] = "Confirmed: X helps."
+    # Rename the heading itself (not just its content) and put real prose
+    # directly under the renamed heading -- exactly the walk's reproduction.
+    renamed_body = body.replace(
+        "## Analysis plan\n\n", "## Analysis Approach (renamed)\n\nWe did the thing.\n\n"
+    )
+    assert "We did the thing." in renamed_body  # sanity: the replace actually matched
+    (question / "README.md").write_text(frontmatter.render(fields) + renamed_body, encoding="utf-8")
+
+    report = run_checks(root)
+
+    assert {f.id for f in report.findings} == {RULE_ANALYSIS_PLAN}
+    message = report.findings[0].message
+    assert "no heading with that exact text was found" in message
+    assert "non-empty" not in message
 
 
 def test_rule10_closed_question_with_analysis_plan_filled_is_not_flagged(tmp_path: Path) -> None:

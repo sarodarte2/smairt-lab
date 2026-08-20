@@ -32,3 +32,14 @@ def slugify(text: str, *, fallback: str = "untitled", sep: str = "_") -> str:
     """
     slug = _NON_ALNUM.sub(sep, text.strip().lower()).strip(sep)
     return slug or fallback
+
+
+def has_usable_characters(text: str) -> bool:
+    """Would :func:`slugify` keep anything from ``text``, or fall all the way back?
+
+    Lets a caller warn *before* silently substituting the fallback name (e.g.
+    a title made entirely of emoji or punctuation) instead of a researcher
+    only discovering the substitution on a second, unrelated-looking
+    "refusing to overwrite" collision.
+    """
+    return bool(_NON_ALNUM.sub("", text.strip().lower()))

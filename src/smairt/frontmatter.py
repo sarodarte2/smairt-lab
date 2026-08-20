@@ -52,13 +52,25 @@ def parse(text: str) -> tuple[dict[str, Any], str]:
     """Split a file's leading frontmatter block from its body.
 
     Returns ``(fields, body)``. Raises :class:`FrontmatterError` if the file has no
-    well-formed ``---``-delimited block at its start. This is a structural parser
-    only: it never inspects or judges the researcher's prose in the body.
+    well-formed ``---``-delimited block at its start, OR if the text between the
+    delimiters is not valid YAML (e.g. an unclosed ``tags: [`` list) — the
+    delimiters being correct says nothing about the YAML inside them being
+    parseable, and a researcher hand-editing a README is far more likely to
+    break the *inside* of the block than its ``---`` fences. Both cases collapse
+    to the same exception type deliberately: every caller (``check.py``,
+    ``index.py``, ``status.py``) already has to handle "this file's frontmatter
+    is broken" as one case, and a raw ``yaml.YAMLError`` escaping here would
+    bypass all of that handling for no benefit to the caller. This is a
+    structural parser only: it never inspects or judges the researcher's prose
+    in the body.
     """
     match = _BLOCK_RE.match(text)
     if not match:
         raise FrontmatterError("file does not open with a well-formed frontmatter block")
-    data = yaml.safe_load(match.group("yaml"))
+    try:
+        data = yaml.safe_load(match.group("yaml"))
+    except yaml.YAMLError as error:
+        raise FrontmatterError(f"frontmatter block is not valid YAML: {error}") from error
     if data is None:
         data = {}
     if not isinstance(data, dict):

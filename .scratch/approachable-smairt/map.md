@@ -102,7 +102,19 @@ Verified against the `v2-rebuild` working tree:
 
 - [Split the README](issues/06-split-the-readme.md) — `README.md` (237 lines) is the path in; `docs/REFERENCE.md` (319) holds the flag tables, harness matrix, and full rule table. Professional register, explains *why* each convention exists, states plainly that there is no worked example. Review catches: the README claimed a hypothesis was required **at creation** (it is not — that distinction is the whole of ticket 02's answer), and `ARCHITECTURE.md`'s rule count was wrong in both its old and proposed form, so it now names the two channels instead of a single drifting number.
 
+- [Adversarial friction walk](issues/07-adversarial-friction-walk.md) — 13 findings against an installed tool. Worst: malformed YAML *inside* a well-formed frontmatter block crashed `check` — the command whose whole job is reporting frontmatter problems — with a traceback, exiting 1, indistinguishable from a normal findings exit. Also confirmed two things that held: nothing leaks outside the project root (`$HOME` diffed across all six harnesses plus `--ci`), and the `prompted_by:` cycle guard survives a hand-made 6-node cycle.
+- [Fix what the walk found](issues/08-fix-the-friction.md) — 8 defects fixed, 5 design gaps left for decisions. 264 tests, up from 244. **The hook exit-code contract was broken and is now restored *and* hardened**: `report`'s "always 0" and `gate`'s "2 means findings exist" no longer hold only while smairt is bug-free — an internal failure now exits 0 / 1 respectively, never 2, because blocking every edit in a session because smairt itself broke would wedge the researcher out of their own work.
+
 ## Not yet specified
+
+- **Five design gaps from the friction walk**, each a missing convention rather
+  than a misbehaviour, so each needs a decision before any code: `smairt.yaml`
+  has no validation of its own and degrades inconsistently across `check.py` and
+  `connect.py`; a unit folder with no README is invisible to every command;
+  nested SMAIRT projects are not flagged at creation; `prompted_by:` cycles are
+  not detected (though confirmed not to hang); `--ref` is not validated at
+  creation even though `--from`'s help text promises validation. See
+  [the inventory](research/07-friction-inventory.md).
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats
   (pi's trust prompt, Codex's restart requirement, OpenCode's lack of a slash

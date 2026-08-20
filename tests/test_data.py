@@ -300,6 +300,41 @@ def test_cli_data_new_hpc_without_a_colon_fails_cleanly(
     assert not (root / "data" / "reads").exists()
 
 
+def test_cli_data_new_hpc_url_is_rejected_instead_of_corrupting_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: `--hpc "https://example.com/data"` used to split cleanly on
+    the first ':' (host="https", path="//example.com/data") and pass, silently
+    recording a nonsense host -- exactly what a researcher who meant --url
+    would produce. It must be rejected the same way the no-colon and
+    empty-host cases already are."""
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["data", "new", "Reads", "--hpc", "https://example.com/data"])
+
+    assert result.exit_code != 0
+    assert "--url" in result.output
+    assert not (root / "data" / "reads").exists()
+
+
+def test_cli_data_new_warns_when_name_slugifies_to_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same fallback-announcement fix as `smairt unit new` (see
+    test_cli_unit_new_warns_when_title_slugifies_to_nothing), applied to
+    `smairt data new`: a symbol-only dataset name used to silently become
+    data/dataset/ with no warning."""
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["data", "new", "???"])
+
+    assert result.exit_code == 0, result.output
+    assert "no letters or digits" in result.output + result.stderr
+    assert (root / "data" / "dataset").is_dir()
+
+
 def test_cli_data_new_refuses_outside_a_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

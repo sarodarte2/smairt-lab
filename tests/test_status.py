@@ -172,6 +172,26 @@ def test_reference_unit_appears_as_a_live_question_without_crashing(tmp_path: Pa
     to_json(report)
 
 
+def test_build_status_report_does_not_crash_on_a_unit_with_no_frontmatter_block(
+    tmp_path: Path,
+) -> None:
+    """Regression: `smairt status` regenerates results/INDEX.md as a side effect
+    (via `index.write_index` -> `index.scan_units`), so a hand-made unit folder
+    with no `---` frontmatter block used to crash `status` with a raw
+    `FrontmatterError` even though `smairt check` reports the identical file
+    cleanly as a SMAIRT001 finding."""
+    root = _project(tmp_path)
+    legacy = root / "experiments" / "01_legacy_stage"
+    legacy.mkdir(parents=True)
+    (legacy / "README.md").write_text("Just a plain README, no frontmatter.\n", encoding="utf-8")
+
+    report = build_status_report(root)
+
+    assert any(finding.id == "SMAIRT001" for finding in report.findings)
+    render_human(report)
+    to_json(report)
+
+
 def test_recently_closed_keeps_only_the_most_recent_three(tmp_path: Path) -> None:
     root = _project(tmp_path)
     for day, title in enumerate(

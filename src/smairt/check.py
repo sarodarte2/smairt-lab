@@ -84,6 +84,15 @@ Judgment calls a reviewer should know about
   resolves relative to the PROJECT ROOT, not the unit folder — it names
   pre-existing paths elsewhere in the tree. Every other pointer field
   (``script:``/``log:``/``outputs:``) stays unit-relative, as before.
+* Rule SMAIRT002 (and rule 8's ``prompted_by:`` check, which mirrors it)
+  never treats an ABSOLUTE pointer value as resolved, even when the absolute
+  path genuinely exists on disk. ``pathlib`` joins an absolute right-hand
+  side by discarding the left side entirely, so without this guard an
+  absolute ``script:``/``log:``/``outputs:``/``paths:`` value would be
+  checked against the whole filesystem instead of the project root/unit
+  folder it's documented to resolve against — the one place in this module
+  where "the pointer happens to exist" and "the pointer is valid" can
+  silently diverge. See :func:`_pointer_resolves`.
 * Rule SMAIRT006 (structure drift) also recognizes ``smairt.yaml``'s
   ``adoption.known_folders`` (written by ``smairt adopt``) as legitimate
   top-level folders, on top of the fixed scaffold set — an adopted project's
@@ -485,11 +494,27 @@ def _pointer_resolves(
     Example: ``script: analysis.py`` resolves if ``analysis.py`` exists next
     to the unit's README. Returns ``False`` (a finding) if not — with one
     exception for not-yet-run questions, explained below.
+
+    An absolute ``target`` is never treated as resolved, even if it happens to
+    exist on the machine. This is deliberate, not an oversight: in
+    ``pathlib``, ``base / target`` silently discards ``base`` entirely when
+    ``target`` is absolute (``Path("/project") / "/etc/hosts" ==
+    Path("/etc/hosts")``), which would let an absolute ``--ref``/``paths:``
+    value (or a hand-typed ``script:``/``log:``/``outputs:``) resolve against
+    the whole filesystem instead of the project root/unit folder it's
+    documented to resolve against — silently passing `smairt check` for a
+    pointer that has actually escaped the project. Every pointer field is
+    documented as project-root- or unit-relative, never as an absolute
+    filesystem path, so rejecting one here (as "does not resolve", the same
+    finding a broken relative path gets) is the correct reading of the
+    contract, not a new restriction.
     """
     # A reference unit's `paths:` (case 3, spec Part II) names pre-existing
     # paths relative to the PROJECT ROOT, not the unit folder — it points
     # elsewhere in the tree, unlike script:/log:/outputs: which are unit-local.
     base = project_root if field == "paths" else unit_path
+    if Path(target).is_absolute():
+        return False
     candidate = base / target
     if candidate.exists():
         return True
@@ -834,7 +859,14 @@ def _prompted_by_resolves(project_root: Path, target: str) -> bool:
     path local to this one). A bare folder that happens to share the name
     but has no README.md — e.g. one rule SMAIRT006 would separately flag as
     structure drift — does not count as "a real unit."
+
+    An absolute ``target`` is never treated as resolved, for the same reason
+    :func:`_pointer_resolves` rejects one: ``pathlib`` would silently discard
+    every path segment built up so far and check the whole filesystem instead
+    of ``experiments/``.
     """
+    if Path(target).is_absolute():
+        return False
     return (project_root / "experiments" / target / "README.md").is_file()
 
 
@@ -932,6 +964,15 @@ def _check_analysis_plan_on_close(units: list[_Unit]) -> list[Finding]:
     units (``paths:`` present, case 3) for the same reason rule SMAIRT009
     does: adopted pre-existing work was never framed as a testable claim, so
     it has no analysis plan to have pre-specified.
+
+    The rule matches on exact heading text (``## Analysis plan``), so a
+    researcher who hand-renamed the heading (a typo, or trying to be more
+    specific) would otherwise see the identical "requires a non-empty ...
+    section" message a genuinely blank section gets — misleading, since they
+    can see their own paragraph sitting right there under the renamed
+    heading. The two cases get two different messages below: "no such
+    heading" (fixable by putting the heading text back) vs. "heading found,
+    body empty" (fixable by writing the plan).
     """
     findings: list[Finding] = []
     for unit in units:
@@ -942,7 +983,20 @@ def _check_analysis_plan_on_close(units: list[_Unit]) -> list[Finding]:
         if "paths" in unit.fields:
             continue
         sections = _split_status_sections(unit.body)
-        plan = sections.get("analysis plan", "")
+        if "analysis plan" not in sections:
+            findings.append(
+                Finding(
+                    RULE_ANALYSIS_PLAN,
+                    ERROR,
+                    f"{unit.rel}/README.md",
+                    f"status '{unit.status}' requires a '## Analysis plan' section, "
+                    "but no heading with that exact text was found -- if you renamed "
+                    "it, rename it back to '## Analysis plan' (this rule matches the "
+                    "heading text exactly).",
+                )
+            )
+            continue
+        plan = sections["analysis plan"]
         if not plan.strip():
             findings.append(
                 Finding(

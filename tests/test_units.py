@@ -261,6 +261,23 @@ def test_cli_unit_new_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert (root / "experiments" / "01_alignment" / "README.md").is_file()
 
 
+def test_cli_unit_new_warns_when_title_slugifies_to_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a title made entirely of emoji/punctuation used to fall back
+    to a generic folder name ('question'/'stage') with no warning printed on
+    first use -- confusing only on a *second* such title, which then collides
+    with the first under an opaque "refusing to overwrite" message."""
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["unit", "new", "question", "--title", "???"])
+
+    assert result.exit_code == 0, result.output
+    assert "no letters or digits" in result.output + result.stderr
+    assert (root / "experiments" / f"{date.today().isoformat()}_question").is_dir()
+
+
 def test_cli_unit_new_refuses_outside_a_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

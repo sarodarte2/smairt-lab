@@ -54,3 +54,16 @@ def test_read_parses_a_file_on_disk(tmp_path: Path) -> None:
 
     assert fields == {"kind": "stage"}
     assert "## Section" in body
+
+
+def test_parse_raises_frontmatter_error_not_raw_yaml_error_for_broken_yaml_inside_a_block() -> None:
+    """Regression: an unclosed `tags: [` inside an otherwise well-formed `---`
+    block used to escape as a raw `yaml.parser.ParserError`, crashing `check`,
+    `status`, and `index` instead of being reported as a SMAIRT001 finding
+    like every other malformed frontmatter block."""
+    text = (
+        "---\nkind: question\ntitle: Bad YAML unit\nstatus: open\ntags: [unterminated list\n---\n"
+    )
+
+    with pytest.raises(FrontmatterError):
+        parse(text)

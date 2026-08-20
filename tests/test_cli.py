@@ -319,6 +319,71 @@ def test_new_refuses_to_overwrite_an_existing_project(tmp_path: Path) -> None:
     assert "refusing to overwrite" in second.output
 
 
+def test_new_warns_when_name_slugifies_to_nothing(tmp_path: Path) -> None:
+    """Regression: a project name made entirely of emoji/symbols used to fall
+    back to the generic folder name 'project' with no warning printed on
+    first use -- see M-1 in the friction inventory. The fallback must be
+    announced so a second, differently-named run's "refusing to overwrite"
+    collision isn't a total surprise."""
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "🎉🎉🎉",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Symbols only.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "no letters or digits" in result.output
+    assert (tmp_path / "project").is_dir()
+
+
+def test_new_surfaces_a_write_error_cleanly_when_path_is_not_a_directory(
+    tmp_path: Path,
+) -> None:
+    """Regression: `--path` naming a plain file used to crash `smairt new` with
+    a raw `NotADirectoryError` traceback instead of a one-line error naming
+    the path and the problem."""
+    blocking_file = tmp_path / "a_plain_file.txt"
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Blocked",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Blocked by a file.",
+            "--path",
+            str(blocking_file),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert str(blocking_file) in result.output
+
+
 def test_new_prompts_only_for_missing_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

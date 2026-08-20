@@ -32,12 +32,43 @@ class PathExistsError(RuntimeError):
     """
 
 
+class WriteError(RuntimeError):
+    """Raised when :func:`write_once` cannot reach disk for a filesystem reason
+    other than the file already existing (that case is :class:`PathExistsError`).
+
+    Covers, among others, a name too long for the filesystem, a read-only
+    parent directory, and ``--path`` naming a plain file instead of a
+    directory — every one of these is a real ``OSError`` subclass a
+    researcher can trigger by accident, and none of them should reach the
+    terminal as a Python traceback.
+    """
+
+
 def write_once(path: Path, content: str) -> Path:
-    """Write ``content`` to ``path``, refusing to overwrite an existing file."""
-    if path.exists():
-        raise PathExistsError(f"refusing to overwrite existing file: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    """Write ``content`` to ``path``, refusing to overwrite an existing file.
+
+    Every filesystem-level failure below "the file already exists" (a name too
+    long for the filesystem, a read-only or missing parent, ``path``'s parent
+    being a plain file rather than a directory, ...) is caught and re-raised as
+    :class:`WriteError` naming ``path`` and the underlying reason, instead of
+    letting the raw ``OSError`` subclass (``PermissionError``,
+    ``NotADirectoryError``, ...) propagate as a traceback. ``path.exists()``
+    itself can raise on some of these (e.g. a name-too-long component), so the
+    whole function is covered, not just the ``mkdir``/``write_text`` calls.
+    """
+    try:
+        if path.exists():
+            raise PathExistsError(f"refusing to overwrite existing file: {path}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    except PathExistsError:
+        raise
+    except OSError as error:
+        reason = error.strerror or str(error)
+        raise WriteError(
+            f"cannot write to {path}: {reason} -- check the path, its permissions, "
+            "and that no parent component is a plain file."
+        ) from error
     return path
 
 

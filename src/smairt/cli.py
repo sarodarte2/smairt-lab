@@ -34,9 +34,9 @@ from smairt import index as index_module
 from smairt import project as project_module
 from smairt import status as status_module
 from smairt import units as units_module
-from smairt.fsutil import PathExistsError
+from smairt.fsutil import PathExistsError, WriteError
 from smairt.project import Harness
-from smairt.text import slugify
+from smairt.text import has_usable_characters, slugify
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -232,6 +232,12 @@ def new(
     if git is None:
         git = _confirm_or_default("Initialize a Git repository?", default=True)
 
+    if not has_usable_characters(name):
+        typer.echo(
+            "Warning: --name has no letters or digits smairt can use for a folder "
+            "name; using 'project' instead of a name derived from it.",
+            err=True,
+        )
     root = (path or Path.cwd()) / slugify(name, fallback="project")
     try:
         project_module.create_project(
@@ -243,7 +249,7 @@ def new(
             hpc=hpc,
             paper=paper,
         )
-    except (PathExistsError, ValueError) as error:
+    except (PathExistsError, WriteError, ValueError) as error:
         _fail("new", str(error))
 
     typer.secho(f"Created {root}", fg=typer.colors.GREEN, bold=True)
@@ -296,7 +302,7 @@ def adopt(
             description=description,
             harness=harness,
         )
-    except (adopt_module.NotAdoptableError, ValueError) as error:
+    except (adopt_module.NotAdoptableError, WriteError, ValueError) as error:
         _fail("adopt", str(error))
 
     typer.echo(f"Adopted {root}")
@@ -352,7 +358,26 @@ def hook(
     root = project_module.find_project_root(Path.cwd())
     if root is None:
         _fail("hook", _HOOK_OUTSIDE_PROJECT_MESSAGE)
-    report = check_module.run_checks(root)
+    try:
+        report = check_module.run_checks(root)
+    except Exception as error:  # noqa: BLE001 - see below; a hook must never crash a session.
+        # `report`'s "always exits 0" and `gate`'s "2 means findings exist" are
+        # promises the README and every generated hook config rely on, so they
+        # cannot hold only while smairt is bug-free. An unexpected failure here
+        # is a smairt defect, not a finding about the researcher's project, and
+        # neither harness protocol has a code that says so -- so `report` keeps
+        # its promise and exits 0, and `gate` exits 1: a plain non-blocking
+        # error. Never 2, which must keep meaning "findings exist, block", for
+        # the same reason _HOOK_OUTSIDE_PROJECT_MESSAGE exits 1 rather than 2.
+        # Blocking every edit in the session because smairt itself broke would
+        # wedge the researcher out of their own work with no way to proceed.
+        typer.echo(
+            f"smairt hook: `smairt check` failed unexpectedly: {error}. "
+            "This is a smairt bug, not a problem with your project; run `smairt "
+            "check` directly to see it in full.",
+            err=True,
+        )
+        raise typer.Exit(code=0 if mode == "report" else 1) from error
     if mode == "report":
         typer.echo(check_module.render_human(report))
         raise typer.Exit(code=0)
@@ -481,6 +506,13 @@ def unit_new(
     """Create a stage or question unit under experiments/. The numbering/dating authority."""
     root = _require_project_root("unit new")
     ref_paths = ref or None
+    if not has_usable_characters(title):
+        fallback = "stage" if kind is units_module.UnitKind.stage else "question"
+        typer.echo(
+            f"Warning: --title has no letters or digits smairt can use for a folder "
+            f"name; using '{fallback}' instead of a name derived from it.",
+            err=True,
+        )
     try:
         if kind is units_module.UnitKind.stage:
             unit_dir = units_module.create_stage(
@@ -506,7 +538,7 @@ def unit_new(
                 repo=repo,
                 ref_paths=ref_paths,
             )
-    except (PathExistsError, ValueError) as error:
+    except (PathExistsError, WriteError, ValueError) as error:
         _fail("unit new", str(error))
 
     typer.echo(f"Created {unit_dir.relative_to(root)}")
@@ -521,7 +553,17 @@ def _parse_hpc_location(value: str, note: str | None) -> data_module.Location:
 
     Fails cleanly (a plain ``ValueError``, not an unhandled ``IndexError``
     from a bad ``.split()``) when ``value`` has no ``:`` separator at all.
+
+    Rejected up front, before the HOST:PATH split: a value containing ``://``
+    (``https://example.com/data``, ...). Splitting a URL like that on the
+    first ``:`` "succeeds" by the letter of the HOST:PATH rule (both halves
+    come out non-empty), but silently produces a nonsense host (``host:
+    "https"``) — exactly what a researcher who meant ``--url`` and typed
+    ``--hpc`` out of habit would produce, with nothing in the tool ever
+    telling them. A real HOST:PATH pair never legitimately contains ``://``.
     """
+    if "://" in value:
+        raise ValueError(f"--hpc expects HOST:PATH, not a URL (got {value!r}); did you mean --url?")
     if ":" not in value:
         raise ValueError(f"--hpc expects HOST:PATH (got {value!r}, with no ':')")
     host, path = value.split(":", 1)
@@ -564,10 +606,16 @@ def data_new(
 ) -> None:
     """Create data/<slug>/README.md, recording where this dataset's bytes live."""
     root = _require_project_root("data new")
+    if not has_usable_characters(name):
+        typer.echo(
+            "Warning: dataset name has no letters or digits smairt can use for a "
+            "folder name; using 'dataset' instead of a name derived from it.",
+            err=True,
+        )
     try:
         locations = _collect_new_locations(hpc, url, local, note)
         dataset_dir = data_module.create_dataset(root, name, locations=locations)
-    except (PathExistsError, ValueError) as error:
+    except (PathExistsError, WriteError, ValueError) as error:
         _fail("data new", str(error))
 
     typer.echo(f"Created {dataset_dir.relative_to(root)}")

@@ -41,6 +41,38 @@ def test_scan_units_is_empty_for_a_fresh_project(tmp_path: Path) -> None:
     assert scan_units(root) == []
 
 
+def test_scan_units_skips_a_unit_with_no_frontmatter_block_instead_of_crashing(
+    tmp_path: Path,
+) -> None:
+    """Regression: a hand-made unit folder with a README that has no `---`
+    frontmatter block at all used to crash both `scan_units` (and therefore
+    `smairt index` and, via `write_index`, `smairt status`) with a raw
+    `FrontmatterError`, even though `smairt check` already handles the
+    identical file gracefully as a SMAIRT001 finding."""
+    root = _project(tmp_path)
+    legacy = root / "experiments" / "01_legacy_stage"
+    legacy.mkdir(parents=True)
+    (legacy / "README.md").write_text("Just a plain README, no frontmatter.\n", encoding="utf-8")
+    create_stage(root, "Alignment", created=date(2026, 1, 5))
+
+    records = scan_units(root)
+
+    # "01_legacy_stage" looks number-like, so the real stage numbers from
+    # there -- next_stage_number() reads every folder under experiments/.
+    assert [record.path for record in records] == ["experiments/02_alignment"]
+
+
+def test_write_index_does_not_crash_on_a_unit_with_no_frontmatter_block(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    legacy = root / "experiments" / "01_legacy_stage"
+    legacy.mkdir(parents=True)
+    (legacy / "README.md").write_text("Just a plain README, no frontmatter.\n", encoding="utf-8")
+
+    path = write_index(root)
+
+    assert path.is_file()
+
+
 def test_scan_units_lists_every_unit_with_its_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path)
     stage = create_stage(root, "Alignment", created=date(2026, 1, 5))

@@ -64,6 +64,14 @@ def scan_units(project_root: Path) -> list[UnitRecord]:
     Folder name order already reads top-down (numbered stages sort before dated
     questions), so no explicit re-sort is needed. Reusable by WP2/WP3 as well as
     ``smairt index``.
+
+    A unit whose README fails to parse (missing frontmatter block, or a block
+    that isn't valid YAML) is silently skipped rather than raising — this
+    module's job is to render an evidence map, not to validate frontmatter;
+    that's already `smairt check`'s job (rule SMAIRT001), and it reports the
+    same file as a finding. Matches how :func:`smairt.status._iter_units`
+    already treats the identical failure, so ``index``/``status``/``check``
+    agree on this file instead of two of the three crashing on it.
     """
     experiments_dir = project_root / "experiments"
     if not experiments_dir.is_dir():
@@ -74,7 +82,10 @@ def scan_units(project_root: Path) -> list[UnitRecord]:
         readme = entry / "README.md"
         if not entry.is_dir() or not readme.is_file():
             continue
-        fields, _ = frontmatter.read(readme)
+        try:
+            fields, _ = frontmatter.read(readme)
+        except frontmatter.FrontmatterError:
+            continue
         records.append(
             UnitRecord(
                 path=f"experiments/{entry.name}",
