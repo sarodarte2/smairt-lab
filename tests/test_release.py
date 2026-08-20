@@ -45,7 +45,6 @@ def test_built_wheel_and_sdist_install_into_clean_environments(tmp_path: Path) -
             member.name.split("/", 1)[1] for member in archive.getmembers() if "/" in member.name
         }
     assert "smairt/cli.py" in wheel_files
-    assert "smairt/assets/scaffold-blueprint.yaml" in wheel_files
     assert f"smairt-{__version__}.dist-info/METADATA" in wheel_files
     assert any(path.endswith(".dist-info/licenses/LICENSE") for path in wheel_files)
     assert {

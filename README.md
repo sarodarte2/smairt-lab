@@ -243,12 +243,6 @@ No errors or warnings.
 0 error(s), 0 warning(s), 0 suggestion(s).
 ```
 
-## Legacy Cookiecutter
-
-Cookiecutter implementations are retained under `legacy/cookiecutter/` only as
-unsupported historical references. They are not packaged, tested, or supported
-generation paths. Use `smairt new` for every new project and automation flow.
-
 ## Limits
 
 - Project Check diagnoses structure and configuration; it does not inspect

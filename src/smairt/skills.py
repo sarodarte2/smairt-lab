@@ -2,7 +2,7 @@
 
 The eight ``smairt-*`` procedures under ``assets/skills/`` (one ``SKILL.md``
 per skill — see docs/AI_SKILL_USAGE.md) ship *inside* the ``smairt`` package
-itself, the same way ``assets/scaffold-blueprint.yaml`` does. An installed
+itself, alongside the package's other bundled assets. An installed
 ``smairt`` might be running from a wheel unpacked into a site-packages
 folder, or, in principle, straight out of a zip — a path built from
 ``__file__``'s parent directories only works for the first of those, and

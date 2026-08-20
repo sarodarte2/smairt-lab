@@ -96,6 +96,8 @@ Verified against the `v2-rebuild` working tree:
 
 - [Implement the scientific conventions](issues/10-implement-the-scientific-conventions.md) — `SMAIRT008/009/010`, `--from`, `## Analysis plan` in the question template, `INDEX.md` lineage nesting, contract and skill text, ADR 0005. Two review corrections: `INDEX.md` indented with `&nbsp;` entities that read as literal junk in a plain-text view (now a real U+00A0), and `AGENTS.md` never mentioned `--from` at all — invisible to any assistant that reads the contract but not the one skill, since `check` deliberately never nags for the link.
 
+- [Retire the stale and vestigial surface](issues/04-retire-the-stale-surface.md) — 735 files gone: QUICKSTART, three tutorials, eight demos, `legacy/`, `plans/`, `MODERNIZATION_PROPOSAL`, and the scaffold-blueprint vestige (precondition verified: nothing under `src/smairt/` imports it). `adversarial_review1.md` moved, not deleted, since a resolved map cites it. Review additions: `skills.py`'s docstring cited the deleted blueprint, and **ADRs 0001–0003 were still marked `Accepted` while describing machinery the rebuild deleted** — now marked Superseded, content kept verbatim.
+
 ## Not yet specified
 
 - **A generic notice channel on `ConnectResult`** — per-harness caveats

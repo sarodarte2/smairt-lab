@@ -1,6 +1,12 @@
 # ADR 0003: Draw the Terminal Interface With the Terminal's Own Palette
 
-Status: Accepted
+Status: Superseded by the v2 rebuild
+
+> This decision is no longer in force. The machinery it governs — the semantic palette and the framed screens it styled — was
+> removed by the rebuild recorded in `.scratch/practical-smairt/spec.md`, and
+> the deleted surface was retired in the `approachable-smairt` effort. The
+> record is kept because the reasoning still explains why those pieces once
+> existed; it does not describe the tool as it is today.
 
 ## Context
 

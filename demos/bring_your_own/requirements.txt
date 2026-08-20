@@ -1,6 +1,0 @@
-# Bring-Your-Own demo dependencies are
-# common starter libs for the synthetic-first quick-starts (add your own).
-numpy
-pandas
-matplotlib
-scikit-learn

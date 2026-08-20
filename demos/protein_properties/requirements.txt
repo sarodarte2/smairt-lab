@@ -1,8 +1,0 @@
-# Protein properties demo. Numpy/
-# pandas handle the per-residue calculations and tables, scikit-learn the simple
-# classifier, and matplotlib the plots. No data download needed: you start by
-# computing properties for known sequences and checking them analytically.
-numpy
-pandas
-scikit-learn
-matplotlib

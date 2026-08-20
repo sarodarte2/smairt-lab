@@ -13,7 +13,7 @@ Label: wayfinder:map
 - Audience decision (charting round): design for computational researchers now (git/CLI/Python-comfortable), without foreclosing "any scientist with an AI assistant" later.
 - Evidence source (charting round): the user's ongoing real research was **forced out of SMAIRT** — files became convoluted, everything mixed. That project (or its reconstruction) is the primary evidence; repo demos are synthetic.
 - Timeline: design record this week; implementation next; real research resumes in SMAIRT the week after.
-- Evidence anchors already established: `adversarial_review1.md` (prior collapse/recovery cycle — several handout "unknowns" have recorded answers there); `CONTEXT.md` glossary defines ~20 tool/TUI terms and no scientific ones; eight overlapping "where are we" records in the scaffold; ~63% of the Python is interactive presentation; README/QUICKSTART point at `PNNL-CompBio/smairt-template` while the remote is `sarodarte2/smairt-lab`, and "V0.1" branding coexists with version 0.4.0.
+- Evidence anchors already established: `docs/history/adversarial_review1.md` (prior collapse/recovery cycle — several handout "unknowns" have recorded answers there); `CONTEXT.md` glossary defines ~20 tool/TUI terms and no scientific ones; eight overlapping "where are we" records in the scaffold; ~63% of the Python is interactive presentation; README/QUICKSTART point at `PNNL-CompBio/smairt-template` while the remote is `sarodarte2/smairt-lab`, and "V0.1" branding coexists with version 0.4.0.
 
 ## Decisions so far
 
