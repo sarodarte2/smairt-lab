@@ -59,11 +59,19 @@ smairt new \
   --name "Signal Recovery" \
   --researcher "A. Researcher" \
   --description "Does denoising recover the true signal in low-SNR imaging data?" \
+  --question "Does denoising recover the true signal in low-SNR live-cell imaging, or does it invent structure?" \
+  --expertise "computational imaging; comfortable in Python, new to version control" \
   --harness claude-code \
   --no-hpc \
   --no-paper \
   --git
 ```
+
+`--question` and `--expertise` are both optional — omit either and it's simply
+absent from `smairt.yaml`, not filled with a placeholder. `--question` becomes
+`background/question.md`'s body and `STATUS.md`'s `## Focus`; `--expertise` is
+recorded in `smairt.yaml` and added to `AGENTS.md` as a `## Who you're working
+with` section, so an assistant calibrates jargon to it from the first session.
 
 `--harness` records one coding assistant in `smairt.yaml` and immediately
 wires it up — its hooks, and SMAIRT's own skills — so it starts working
@@ -202,7 +210,10 @@ when there is none to ask) runs `git init` and stages the generated
 scaffold — nothing more. SMAIRT never commits; that first commit is a
 deliberate act left to you. If the new project sits inside a Git repository
 that starts above it, SMAIRT leaves Git alone rather than nesting a second
-repository inside the first.
+repository inside the first. A `--no-git` choice is recorded as
+`settings.git: false` in `smairt.yaml`, so `smairt check` recognizes the
+opt-out as deliberate and doesn't keep suggesting Git (advisory `SMAIRT101`)
+on every run.
 
 Tracking `smairt.yaml`, `AGENTS.md`, the harness wiring, and the CI workflow
 means every collaborator who clones the project — human or coding assistant

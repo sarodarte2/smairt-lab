@@ -52,7 +52,7 @@ Researcher / assistant harness
 
 Almost every file SMAIRT writes is a plain Python string, formatted and
 written directly — there is no template engine. `project.py` holds the
-day-one scaffold's text (`_AGENTS_TEMPLATE`, `_GITIGNORE`, the various
+day-one scaffold's text (`_AGENTS_BODY`, `_GITIGNORE`, the various
 `_README` constants); `connect.py` holds one render function per harness
 (`_render_claude_settings`, `_render_codex_hooks`, ...); `units.py` builds a
 unit README's frontmatter + body inline in `create_stage`/`create_question`.

@@ -108,6 +108,39 @@ def test_adopt_status_md_is_seeded_per_spec(tmp_path: Path) -> None:
     assert "create reference units" in status
 
 
+def test_adopt_expertise_given_is_recorded_in_smairt_yaml_and_agents_md(tmp_path: Path) -> None:
+    root = _fake_research_project(tmp_path)
+
+    _adopt(root, expertise="single-cell genomics; comfortable in R, learning Python")
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    agents = (root / "AGENTS.md").read_text()
+    assert config["expertise"] == "single-cell genomics; comfortable in R, learning Python"
+    assert "single-cell genomics; comfortable in R, learning Python" in agents
+
+
+def test_adopt_expertise_absent_writes_no_key_and_stays_clean(tmp_path: Path) -> None:
+    root = _fake_research_project(tmp_path)
+
+    _adopt(root)
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    assert "expertise" not in config
+    report = run_checks(root)
+    assert report.findings == ()
+
+
+def test_adopt_never_writes_a_question_md(tmp_path: Path) -> None:
+    # adopt has no --question flag at all (spec: adoption lays contract files
+    # around pre-existing work and never frames it as a fresh testable
+    # claim) -- background/ is never created by adopt in the first place.
+    root = _fake_research_project(tmp_path)
+
+    _adopt(root)
+
+    assert not (root / "background").exists()
+
+
 def test_adopted_project_passes_check_immediately(tmp_path: Path) -> None:
     root = _fake_research_project(tmp_path)
 

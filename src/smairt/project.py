@@ -10,7 +10,7 @@ overwriting anything.
 
 Most of this file's length is the literal *text* of the generated files
 (the big triple-quoted string constants near the bottom, like
-``_AGENTS_TEMPLATE`` and ``_GITIGNORE``) — the actual logic is short. Two of
+``_AGENTS_BODY`` and ``_GITIGNORE``) — the actual logic is short. Two of
 its rendering functions are reused elsewhere because the content must be
 byte-identical everywhere it appears: :func:`render_identity` and
 :func:`render_status` are also called by :mod:`smairt.adopt` (adopting a
@@ -238,6 +238,9 @@ def create_project(
     harness: Harness = Harness.claude_code,
     hpc: bool = False,
     paper: bool = False,
+    question: str | None = None,
+    expertise: str | None = None,
+    git: bool = True,
     created: date | None = None,
     scaffold_version: str | None = None,
 ) -> Path:
@@ -245,6 +248,44 @@ def create_project(
 
     Every file is written once via :func:`smairt.fsutil.write_once`, so re-running
     this against an existing project errors instead of clobbering researcher edits.
+
+    ``question`` and ``expertise`` are both optional and both blank-string-means-
+    absent (``cli.py``'s prompts hand back ``""`` on a skip, never ``None``, so
+    this treats an empty/whitespace-only string identically to ``None`` rather
+    than making every caller remember to normalize it first):
+
+    * ``question`` is the researcher's one-line "big question" -- the thing the
+      whole project hangs off. When given, it becomes BOTH
+      ``background/question.md``'s body and ``STATUS.md``'s ``## Focus`` (see
+      :func:`_render_question_md` and :func:`render_status`'s ``focus=``); when
+      absent, both fall back to the exact placeholder/description behavior this
+      function always had, so a researcher who skips the prompt (the common,
+      explicitly-supported case -- day one is often too early to have this
+      phrased) sees zero behavior change. ``description`` is never touched
+      either way; it stays the short filing label in ``smairt.yaml`` and
+      ``AGENTS.md``'s title line, exactly as before this field existed.
+    * ``expertise`` is the researcher's own account of their field plus how much
+      of the computing side they want explained -- folded into ``smairt.yaml``
+      (:func:`render_identity`) and ``AGENTS.md`` (:func:`render_agents_md`) so
+      every harness reading the contract can calibrate jargon accordingly. When
+      absent, neither file gains anything: no ``expertise:`` key, no extra
+      ``AGENTS.md`` section -- see those two functions' own docstrings for why
+      an absent key is not the same as an empty one.
+
+    ``git`` records the researcher's own git/no-git choice into
+    ``smairt.yaml``'s ``settings.git`` (see :func:`render_identity`) so
+    :mod:`smairt.check`'s SMAIRT101 advisory can tell a deliberate opt-out
+    from an accident later, once the project genuinely has no ``.git`` to
+    inspect. This function does not act on the choice itself -- running (or
+    skipping) ``git init`` is :func:`init_git`'s job, called separately by
+    ``cli.py``'s ``new`` command AFTER this function returns and after harness
+    wiring runs, so everything the day-one scaffold produces gets staged
+    together (see :func:`init_git`'s own docstring for why that ordering
+    matters). Defaults to ``True`` -- the pre-existing default every caller
+    that predates this field already assumed -- so a caller that never mentions
+    git gets the identical ``smairt.yaml`` (no ``settings.git`` key at all) it
+    always got; see :func:`render_identity` for why the key is omitted rather
+    than written as ``true``.
     """
     researcher = Researcher(name=researcher).name
     if not description.strip():
@@ -252,21 +293,27 @@ def create_project(
 
     today = created or date.today()
     version = scaffold_version or __version__
+    question = question.strip() if question and question.strip() else None
+    expertise = expertise.strip() if expertise and expertise.strip() else None
 
     # smairt.yaml is the project's identity file (name, researcher, harness) --
     # written first so every later step happens inside a folder that
     # find_project_root() can already recognize as a SMAIRT project.
     write_once(
         root / "smairt.yaml",
-        render_identity(name, researcher, description, harness, today, version),
+        render_identity(
+            name, researcher, description, harness, today, version, expertise=expertise, git=git
+        ),
     )
 
     # STATUS.md starts with the paper note as its one open question, if the
     # researcher said this project expects to support a paper -- a nudge
     # toward the (currently deferred) Paper overlay, not a real feature yet.
     open_questions = [_PAPER_NOTE] if paper else []
-    write_once(root / "STATUS.md", render_status(today, description, open_questions))
-    write_once(root / "AGENTS.md", render_agents_md(name, description))
+    write_once(
+        root / "STATUS.md", render_status(today, description, open_questions, focus=question)
+    )
+    write_once(root / "AGENTS.md", render_agents_md(name, description, expertise=expertise))
     # CLAUDE.md is the 2-line bridge so Claude Code (which reads CLAUDE.md,
     # not AGENTS.md) still ends up following the same one contract as every
     # other harness -- see CLAUDE_BRIDGE below.
@@ -274,7 +321,7 @@ def create_project(
     write_once(root / ".gitignore", _GITIGNORE)
 
     write_once(root / "background" / "README.md", _BACKGROUND_README)
-    write_once(root / "background" / "question.md", _render_question_md(description))
+    write_once(root / "background" / "question.md", _render_question_md(description, question))
     write_once(root / "background" / "literature" / ".gitkeep", "")
     write_once(root / "background" / "prior_work" / ".gitkeep", "")
 
@@ -429,20 +476,61 @@ def render_identity(
     scaffold_version: str,
     *,
     adoption: Mapping[str, object] | None = None,
+    expertise: str | None = None,
+    git: bool = True,
 ) -> str:
     """Render ``smairt.yaml`` (Part II schema). Shared by ``smairt new`` and
     ``smairt adopt`` — the latter passes ``adoption`` (``adopted``/``date``/
-    ``known_folders``), the only schema addition adoption makes."""
+    ``known_folders``), the only schema addition adoption makes.
+
+    ``expertise`` is an OPTIONAL top-level key, omitted entirely (never written
+    as ``expertise: null`` or ``expertise: ""``) when not given -- a project that
+    never answered the prompt must read exactly as it did before this field
+    existed, both to a human scanning the file and to
+    :mod:`smairt.check`'s SMAIRT011 rule, whose required-field list
+    (:data:`smairt.check._PROJECT_CONFIG_REQUIRED_FIELDS`) deliberately does NOT
+    include it: an absent ``expertise:`` is a researcher who hasn't said yet,
+    not a finding, and must never become one just because a key happens to be
+    missing. A blank/whitespace-only value is treated as "not given" by
+    :func:`create_project` before it ever reaches this function, so the only
+    two states this function itself has to render are "the key is present with
+    real text" and "the key does not exist" -- never a present-but-empty
+    middle state that would need its own handling everywhere the field is read.
+
+    ``git`` mirrors that same "present only when it says something" shape for
+    ``settings.git``, but the polarity is inverted for a different reason:
+    ``settings.strict_hooks`` (this function's other ``settings`` key) is
+    always written because ``False`` is its own meaningful, common default a
+    reader needs to see -- there is no ambiguity to avoid. ``settings.git``
+    exists purely so SMAIRT101 (raw-log immutability can't be checked) can
+    tell "this researcher deliberately chose no Git" from "this project just
+    hasn't run ``git init`` yet" once both look identical on disk (no
+    ``.git`` either way). Only the deliberate-opt-out case needs recording --
+    the default, git-enabled case needs no marker at all, since that's what
+    "the key is absent" already means everywhere else in this schema. Writing
+    ``settings.git: true`` on every project that took the (also default)
+    ``smairt new`` git prompt would be pure noise: one more line every
+    existing project (and every test asserting this schema's exact shape)
+    would have to carry for a fact that was already true by default.
+    """
     config: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "scaffold_version": scaffold_version,
         "name": name,
         "researcher": researcher,
         "description": description,
-        "created": created,
-        "harnesses": [] if harness is Harness.none else [harness.value],
-        "settings": {"strict_hooks": False},
     }
+    # Inserted here (right after description, before created:) rather than
+    # tacked onto the end -- expertise is an identity field, same family as
+    # name/researcher/description, and reads best grouped with them.
+    if expertise:
+        config["expertise"] = expertise
+    config["created"] = created
+    config["harnesses"] = [] if harness is Harness.none else [harness.value]
+    settings: dict[str, object] = {"strict_hooks": False}
+    if not git:
+        settings["git"] = False
+    config["settings"] = settings
     if adoption is not None:
         config["adoption"] = dict(adoption)
     return yaml.safe_dump(config, sort_keys=False, default_flow_style=False, allow_unicode=True)
@@ -457,12 +545,28 @@ def render_status(
     open_questions: Sequence[str],
     *,
     next_step: str = _DEFAULT_NEXT_STEP,
+    focus: str | None = None,
 ) -> str:
     """Render ``STATUS.md``. Shared by ``smairt new`` and ``smairt adopt`` — the
-    latter passes its own seeded ``next_step`` text."""
+    latter passes its own seeded ``next_step`` text.
+
+    ``focus`` lets a caller put something OTHER than ``description`` in the
+    ``## Focus`` section without changing ``description``'s own meaning
+    everywhere else it's used (the short filing label in ``smairt.yaml`` and
+    ``AGENTS.md``'s title line). The one caller that passes it is
+    :func:`create_project`, when the researcher answered ``smairt new``'s
+    big-question prompt: the question, not the one-line description, is what
+    should orient a returning researcher (or ``smairt status``'s "Focus:"
+    line), because a filing label like "Computational Biology" was never
+    meant to answer "what is this project actually trying to find out."
+    Defaults to ``None``, which falls back to ``description`` -- the exact
+    behavior this function always had -- so every caller that predates this
+    parameter (``smairt adopt``, and ``smairt new`` whenever the question was
+    skipped) renders byte-identical output.
+    """
     lines = [
         "## Focus",
-        description,
+        focus if focus is not None else description,
         "",
         "## Next",
         next_step,
@@ -476,8 +580,32 @@ def render_status(
     return frontmatter.render({"updated": today}) + "\n" + "\n".join(lines) + "\n"
 
 
-def _render_question_md(description: str) -> str:
-    """Render ``background/question.md``, seeded with the project's one-line description."""
+def _render_question_md(description: str, question: str | None = None) -> str:
+    """Render ``background/question.md``.
+
+    Two shapes, depending on whether the researcher answered ``smairt new``'s
+    big-question prompt:
+
+    * ``question`` given: it becomes the file's body outright, with a short
+      framing line making clear this is the file the whole project hangs
+      off -- the researcher already did the hard part (phrasing it), so
+      there's nothing left to prompt them to replace.
+    * ``question`` absent (``None``, the default): the exact placeholder
+      behavior this function always had -- seeded with ``description`` and an
+      instruction to replace it, so every existing caller (``smairt new``
+      whenever the prompt is skipped -- the common, explicitly-supported
+      case) renders byte-identical output to before this parameter existed.
+      ``smairt adopt`` never calls this function at all (adoption is
+      contract-around, not question-first -- see :mod:`smairt.adopt`'s module
+      docstring), so it is unaffected either way.
+    """
+    if question:
+        return (
+            "# The question\n\n"
+            f"{question}\n\n"
+            "This is the project's big question -- the one everything under "
+            "`experiments/` answers. It should stay stable while that work moves.\n"
+        )
     return (
         "# The question\n\n"
         f"{description}\n\n"
@@ -489,24 +617,51 @@ def _render_question_md(description: str) -> str:
 _PAPER_NOTE = "Paper support (a `paper/` overlay) is deferred until real paper work begins."
 
 
-def render_agents_md(name: str, description: str) -> str:
+def render_agents_md(name: str, description: str, *, expertise: str | None = None) -> str:
     """The canonical AGENTS.md contract (spec WP5): ~1 page, tier-3 guidance only.
 
     Everything tier-1 (generated) or tier-2 (checked) can carry is a command
     reference here, not restated as prose — see Part I, foundation 2. Kept
     under the ~120-line cap (including the ``## Project learnings`` header)
-    by :mod:`tests.test_project`. Shared verbatim by ``smairt new`` and
-    ``smairt adopt`` (one contract, generated the same way everywhere — spec
-    Part I foundation 2) — the ONE rendering function, no duplicate template.
+    by :mod:`tests.test_project`. Shared by ``smairt new`` and ``smairt
+    adopt`` (one contract, generated the same way everywhere — spec Part I
+    foundation 2) — the ONE rendering function, no duplicate template.
+
+    ``expertise`` is optional and, when given, adds one short section right
+    under the title: "## Who you're working with". This is deliberately NOT
+    folded into the title line itself (``{name}: {description}``) — that line
+    is the short filing label a researcher scans first, and a whole
+    field/tooling-comfort sentence stapled onto it would make even the
+    common, no-expertise case's title line unpredictable in length. A
+    dedicated section, by contrast, costs the no-expertise case nothing (it's
+    just absent) and gives an assistant something concrete to point back to:
+    AGENTS.md's own "## The explanation rule" section already says every
+    notable-or-above proposal must be stated "in plain language" — until now
+    that instruction had no way to know what "plain" means for THIS
+    researcher (jargon-heavy is exactly "plain" for a specialist in their own
+    field, and exactly the opposite for someone new to the tooling). This
+    section is what finally gives that existing rule a researcher-specific
+    target instead of one guess-worthy adjective.
+
+    Kept as string concatenation (header text built here, ``## Shape``
+    onward still the fixed :data:`_AGENTS_BODY` constant) rather than one
+    ``.format()`` call against a single template, specifically so the
+    no-expertise case's output stays byte-identical to what this function
+    produced before ``expertise`` existed — every project, and every
+    existing golden-fixture comparison, that never answers the prompt must
+    see zero drift.
     """
-    return _AGENTS_TEMPLATE.format(name=name, description=description)
+    header = f"# AGENTS.md\n\n{name}: {description}\n"
+    if expertise:
+        header += (
+            "\n## Who you're working with\n\n"
+            f"{expertise} -- calibrate jargon and explanations to this, not the "
+            "reverse, per The explanation rule below.\n"
+        )
+    return header + "\n" + _AGENTS_BODY
 
 
-_AGENTS_TEMPLATE = """\
-# AGENTS.md
-
-{name}: {description}
-
+_AGENTS_BODY = """\
 ## Shape
 
 ```

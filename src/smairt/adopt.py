@@ -39,6 +39,14 @@ Judgment calls a reviewer should know about
 * The "looks like a SMAIRT tool checkout" refusal is a heuristic
   (``pyproject.toml`` naming a ``smairt`` project), not a guarantee — it is
   meant to catch the obvious self-adoption mistake, not every possible one.
+* ``--expertise`` (optional, skippable, same prompt copy as ``smairt new``)
+  is the one identity field this module DOES thread through past adoption's
+  "contract-around" line, unlike ``--question``. The distinction: a big
+  research question is a claim about work that hasn't happened yet, which is
+  exactly backwards for adoption (the work already exists); the researcher's
+  own field and tooling comfort describe THEM, not the work, so it is just
+  as true and just as useful whether the project is brand new or being
+  adopted after the fact.
 """
 
 from __future__ import annotations
@@ -120,6 +128,7 @@ def adopt_project(
     researcher: str,
     description: str,
     harness: Harness = Harness.claude_code,
+    expertise: str | None = None,
     created: date | None = None,
     scaffold_version: str | None = None,
 ) -> AdoptResult:
@@ -131,10 +140,22 @@ def adopt_project(
     already exists with different content (e.g. a researcher-authored
     ``AGENTS.md``) is warned about and left untouched — the same
     :func:`smairt.fsutil.write_or_warn` policy ``smairt connect`` uses.
+
+    ``expertise`` is optional and skippable, same as it is for ``smairt new``
+    (see :func:`smairt.project.create_project`'s docstring for the full
+    reasoning) — passed straight through to :func:`smairt.project.render_identity`
+    and :func:`smairt.project.render_agents_md` so an adopted project's
+    ``smairt.yaml``/``AGENTS.md`` gain it exactly the same way a fresh one
+    does. Unlike ``question`` (spec: only ``smairt new`` asks it -- adoption
+    is contract-around, never framed as a fresh testable claim, and never
+    writes ``background/question.md`` at all), expertise applies equally well
+    to a researcher adopting old work as one starting new work, so both
+    commands take the flag.
     """
     researcher = Researcher(name=researcher).name
     if not description.strip():
         raise ValueError("description must not be empty")
+    expertise = expertise.strip() if expertise and expertise.strip() else None
 
     if not root.is_dir():
         raise NotAdoptableError(
@@ -181,10 +202,19 @@ def adopt_project(
     }
     _write(
         "smairt.yaml",
-        render_identity(name, researcher, description, harness, today, version, adoption=adoption),
+        render_identity(
+            name,
+            researcher,
+            description,
+            harness,
+            today,
+            version,
+            adoption=adoption,
+            expertise=expertise,
+        ),
     )
     _write("STATUS.md", render_status(today, description, [], next_step=_ADOPT_NEXT_STEP))
-    _write("AGENTS.md", render_agents_md(name, description))
+    _write("AGENTS.md", render_agents_md(name, description, expertise=expertise))
     _write("experiments/README.md", _EXPERIMENTS_README)
 
     index.write_index(root)  # results/INDEX.md is derived, not a skeleton — always regenerated

@@ -56,7 +56,9 @@ Findings (severity error/warning; each instance affects the process exit code)::
 Advisory suggestions (a separate channel; never affect the exit code)::
 
     SMAIRT101  Git is unavailable, so raw-log immutability (rule SMAIRT004)
-               could not be checked at all — one note, not per-file.
+               could not be checked at all — one note, not per-file. Suppressed
+               (DG-5) when smairt.yaml records the researcher's own choice not
+               to use Git; still fires whenever that choice is absent or true.
     SMAIRT102  SLURM/sbatch content found in a unit but the project has no
                hpc/ folder yet.
     SMAIRT103  Three or more question units share a leading slug word: a
@@ -227,6 +229,24 @@ Judgment calls a reviewer should know about
   :func:`smairt.index._ordered_for_index`, which also refuses to nest a
   record under itself — but only to decide it shouldn't render as its own
   parent, a rendering choice this rule has no reason to copy.
+* **DG-5 (SMAIRT101 suppression on a recorded git opt-out)**: a researcher who
+  answers "no" to ``smairt new``'s Git prompt (or passes ``--no-git``) gets
+  ``settings.git: false`` written into ``smairt.yaml``
+  (:func:`smairt.project.render_identity`); :func:`_git_opt_out_recorded`
+  reads it back defensively, the same shape as
+  :func:`smairt.connect.read_strict_hooks`. SMAIRT101 exists to flag a
+  project that has *no history to check* — usually because nobody ever ran
+  ``git init``, an oversight worth a nudge. A deliberate, recorded no-git
+  choice is a different fact: there will never be Git history to check,
+  on purpose, so repeating the nudge every single ``smairt check`` forever
+  would just be the tool arguing with a decision already made. This
+  deliberately does NOT touch rule SMAIRT004 itself (log immutability):
+  SMAIRT004 already only runs when :func:`smairt.project.is_git_work_tree`
+  is true, so a no-Git project never reaches it either way — the opt-out
+  only changes whether the ADVISORY about not being able to run it also
+  fires, never a finding's severity or existence. Never promoted to a
+  finding and never given its own rule id: it changes exactly one existing
+  suggestion's firing condition, not the state contract itself.
 """
 
 from __future__ import annotations
@@ -431,10 +451,14 @@ def run_checks(project_root: Path) -> CheckReport:
     suggestions: list[Suggestion] = []
     if project_module.is_git_work_tree(project_root):
         findings += _check_log_immutability(project_root, units)
-    else:
+    elif not _git_opt_out_recorded(project_root):
         # No Git, no history to check for edits after the fact -- rule
         # SMAIRT004 simply can't run, so we say so once (SMAIRT101) instead
-        # of silently skipping it.
+        # of silently skipping it. Unless the researcher already told
+        # `smairt new` they were choosing no Git on purpose (DG-5, see
+        # :func:`_git_opt_out_recorded`) -- SMAIRT101 exists to catch an
+        # ACCIDENT (a project nobody ever `git init`'d), and a recorded
+        # choice is not one.
         suggestions.append(
             Suggestion(
                 SUGGEST_GIT_UNAVAILABLE,
@@ -522,6 +546,42 @@ def _load_units(project_root: Path) -> list[_Unit]:
 # --- project identity (rule SMAIRT011) ----------------------------------------
 
 _PROJECT_CONFIG_REQUIRED_FIELDS = ("name", "researcher", "description")
+
+
+def _git_opt_out_recorded(project_root: Path) -> bool:
+    """Did the researcher tell ``smairt new`` "no Git" on purpose (DG-5)?
+
+    Reads ``smairt.yaml``'s ``settings.git`` the same defensive way
+    :func:`smairt.connect.read_strict_hooks` reads ``settings.strict_hooks``:
+    through :func:`smairt.project.read_project_config`, falling back to
+    ``False`` (i.e. "no recorded opt-out, act as before") on anything short of
+    finding the key explicitly set to ``False`` -- a missing/unparseable/
+    wrong-shaped ``smairt.yaml`` degrades exactly the way it already does for
+    every other advisory-channel read in this codebase (see the module
+    docstring's "DG-1's degrade policy" bullet); this is a *read* falling back
+    to a safe default, not a write that silently failed, so no warning is
+    owed here even when the fallback fires.
+
+    ``settings.git`` is absent from the vast majority of projects (only
+    ``smairt new --no-git``, or answering "no" at its prompt, ever writes it —
+    see :func:`smairt.project.render_identity`), and absent is read as "no
+    opt-out recorded", never as an opt-out itself: a project that predates
+    this field, or was created with Git enabled, must keep getting SMAIRT101
+    exactly as before once it genuinely has no ``.git`` to inspect (a
+    researcher who deleted ``.git`` by hand, say). Only an explicit ``git:
+    false`` counts -- checked with ``is False`` rather than plain falsiness,
+    so a YAML quirk that parses ``git:`` to something else falsy-but-not-
+    boolean (an empty string from a stray hand-edit, for instance) reads as
+    "not a recognized opt-out" rather than silently suppressing a real
+    finding-adjacent signal on a technicality.
+    """
+    config = project_module.read_project_config(project_root)
+    if config.data is None:
+        return False
+    settings = config.data.get("settings")
+    if not isinstance(settings, dict):
+        return False
+    return settings.get("git") is False
 
 
 def _check_project_config(project_root: Path) -> list[Finding]:

@@ -21,7 +21,7 @@ one.
 | `smairt unit new stage\|question --title ...` | Create one unit under `experiments/` — the sole numbering/dating authority. |
 | `smairt data new\|locate\|list` | Record and list where each dataset's bytes physically live. |
 | `smairt index` | Regenerate `results/INDEX.md`. |
-| `smairt hook report\|gate` | Speaks a harness hook's exit-code protocol; called by generated wiring, not usually typed by hand. |
+| `smairt hook report\|gate\|brief` | Speaks a harness hook's exit-code protocol; called by generated wiring, not usually typed by hand. |
 
 Flag lists below were verified against `uv run smairt <command> --help` on
 this tree.
@@ -37,19 +37,23 @@ Creates the ten-item day-one scaffold (`smairt.yaml`, `STATUS.md`,
 | `--name TEXT` | Project name. |
 | `--researcher TEXT` | Researcher name. |
 | `--description TEXT` | One-line project description. |
+| `--question TEXT` | The project's big question: becomes `background/question.md`'s body and `STATUS.md`'s `## Focus`. Optional — omitted entirely (never written as a placeholder) when skipped. |
+| `--expertise TEXT` | The researcher's field plus how much of the computing side they want explained. Optional, same skip behavior as `--question`; recorded as `smairt.yaml`'s `expertise:` and added to `AGENTS.md` as a `## Who you're working with` section. |
 | `--path PATH` | Parent directory for the new project (default: current directory). The project folder itself is derived from `--name`. |
 | `--harness [claude-code\|codex\|opencode\|gemini-cli\|cursor\|pi\|none]` | Assistant harness to record in `smairt.yaml`; wires it up immediately (hooks and skills — see *Connect a coding assistant* below). `none` skips wiring for now; connect one later with `smairt connect <harness>`. |
 | `--hpc` / `--no-hpc` | Also generate `hpc/` with a commented SLURM template. |
 | `--paper` / `--no-paper` | Leave a note under `STATUS.md`'s open questions that a paper overlay is a deferred, not-yet-built feature. |
-| `--git` / `--no-git` | Initialize a Git repository and stage the scaffold (never commits). |
+| `--git` / `--no-git` | Initialize a Git repository and stage the scaffold (never commits). A `--no-git` choice is recorded as `smairt.yaml`'s `settings.git: false`, which suppresses the `SMAIRT101` advisory. |
 
 `--name`/`--researcher`/`--description`/`--harness` prompt interactively when
-omitted at a real terminal. `--hpc`/`--paper`/`--git` also prompt
-interactively when omitted; with no terminal attached, each takes its
-documented default instead (no HPC, no paper note, Git initialized) — so a
-non-interactive `smairt new` needs only
-`--name`/`--researcher`/`--description`/`--harness`. `--hpc` and `--paper`
-are independent of each other and of everything else.
+omitted at a real terminal. `--question`/`--expertise`/`--hpc`/`--paper`/`--git`
+also prompt interactively when omitted; with no terminal attached, `--question`
+and `--expertise` are skipped (left absent) and `--hpc`/`--paper`/`--git` take
+their documented default instead (no HPC, no paper note, Git initialized) — so
+a non-interactive `smairt new` needs only
+`--name`/`--researcher`/`--description`/`--harness`. `--question`, `--expertise`,
+`--hpc`, and `--paper` are all independent of each other and of everything
+else.
 
 Running `smairt new` inside an already-existing SMAIRT project (any
 ancestor directory holding its own `smairt.yaml`) still creates the new
@@ -72,8 +76,12 @@ about it.
 | `--name TEXT` | Project name. |
 | `--researcher TEXT` | Researcher name. |
 | `--description TEXT` | One-line project description. |
+| `--expertise TEXT` | The researcher's field plus how much of the computing side they want explained. Optional (same skip behavior as `smairt new --expertise`). |
 | `--path PATH` | Directory to adopt (default: current directory). |
 | `--harness [claude-code\|codex\|opencode\|gemini-cli\|cursor\|pi\|none]` | Assistant harness to record in `smairt.yaml` (same behavior as `smairt new`). |
+
+`smairt adopt` has no `--question`: it never seeds a big question on a
+pre-existing project.
 
 ### `smairt check`
 
@@ -178,7 +186,7 @@ origin's row (indented) rather than getting its own column.
 
 | Argument | Description |
 | --- | --- |
-| `mode` | `report` prints findings and always exits 0 (safe for session-end hooks); `gate` exits 2 while findings exist — the block code Claude Code, Codex, and Cursor hooks understand. |
+| `mode` | `report` prints findings and always exits 0 (safe for session-end hooks); `brief` prints `smairt status`'s human view and always exits 0 (safe for session-start hooks); `gate` exits 2 while findings exist — the block code Claude Code, Codex, and Cursor hooks understand. |
 
 Called by the generated wiring below, not usually typed by hand.
 
@@ -190,12 +198,12 @@ plus a copy of SMAIRT's eight skills, to the one shared contract —
 
 | Harness | Generated wiring | Skills installed to |
 | --- | --- | --- |
-| `claude-code` | `CLAUDE.md` bridge + `.claude/settings.json` Stop hook | `.claude/skills/<name>/SKILL.md` |
+| `claude-code` | `CLAUDE.md` bridge + `.claude/settings.json` SessionStart (`smairt hook brief`) and Stop (`smairt hook report`) hooks | `.claude/skills/<name>/SKILL.md` |
 | `codex` | `.codex/hooks.json` (loads once you trust the project) | `.agents/skills/<name>/SKILL.md` |
 | `cursor` | `.cursor/hooks.json` + always-applied `.cursor/rules/smairt.mdc` | `.agents/skills/<name>/SKILL.md` |
 | `opencode` | `.opencode/plugins/smairt-check.ts` | `.agents/skills/<name>/SKILL.md` |
 | `pi` | `.pi/extensions/smairt-check.ts` | `.agents/skills/<name>/SKILL.md` |
-| `gemini-cli` | smairt keys merged into `.gemini/settings.json` | `.agents/skills/<name>/SKILL.md` |
+| `gemini-cli` | smairt keys merged into `.gemini/settings.json`, including a SessionStart hook running `smairt hook brief` | `.agents/skills/<name>/SKILL.md` |
 
 Codex, OpenCode, and pi read `AGENTS.md` natively, so they need no bridge
 file. Claude Code is the one harness with no documented `.agents/` support,
@@ -224,12 +232,15 @@ since researchers are likely to already have a populated file for unrelated
 reasons, so only missing keys are ever added.
 
 The hooks call `smairt hook report`, which surfaces `smairt check` findings
-at session end and always exits 0. Setting `settings.strict_hooks: true` in
-`smairt.yaml` (then re-running `connect`) also wires `smairt hook gate`,
-which exits 2 — the block code these harnesses understand — so edits are
-refused while findings exist. `smairt connect --ci` writes a GitHub Actions
-workflow, the enforcement floor that binds every contributor regardless of
-local hooks.
+at session end and always exits 0. On Claude Code and Gemini CLI, a
+SessionStart hook also calls `smairt hook brief`, which prints `smairt
+status`'s human view and always exits 0, so a fresh session orients itself
+without the researcher having to think to ask. Setting `settings.strict_hooks:
+true` in `smairt.yaml` (then re-running `connect`) also wires `smairt hook
+gate`, which exits 2 — the block code these harnesses understand — so edits
+are refused while findings exist. `smairt connect --ci` writes a GitHub
+Actions workflow, the enforcement floor that binds every contributor
+regardless of local hooks.
 
 ## `smairt check`: rules and output
 

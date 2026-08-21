@@ -101,6 +101,22 @@ Judgment calls a reviewer should know about
   Gemini CLI remains the one best-effort config: its hook entry shape was
   never verified against a literal example, and the generated file still says
   so inside its ``_comment``.
+* SessionStart-equivalent wiring (``smairt hook brief`` — see ``cli.py``'s
+  ``hook`` command): added ONLY where the verified-shape research above
+  already names the event. Claude Code's own docs confirm ``SessionStart``
+  fires once at session start, so it gets the hook unconditionally (see
+  :func:`_render_claude_settings`). Gemini CLI's research note above already
+  lists ``SessionStart`` by name alongside ``BeforeTool``/``SessionEnd`` (only
+  the literal hooks *entry shape* is best-effort there, not the event's
+  existence), so it gets the hook too (see :func:`_gemini_desired_hooks`).
+  Codex, Cursor, OpenCode, and pi are each verified above for a specific,
+  different set of events (``Stop``/``PreToolUse``; ``stop``/``preToolUse``;
+  ``session.idle``/``tool.execute.before``; ``agent_end``/``tool_call``) with
+  no session-START event named anywhere in that research — so none of the
+  four gets a brief hook. Guessing an event name for any of them (e.g.
+  assuming Codex's ``Stop``-mirroring shape also has a ``SessionStart`` twin)
+  would risk shipping a generated hook config that silently never fires,
+  which is worse than the gap it would be closing.
 * Exit-code adaptation: hook configs call ``smairt hook gate`` / ``smairt hook
   report`` (see ``cli.py``) rather than ``smairt check``, because the raw
   check's exit 1 means "non-blocking error" to every hook protocol above —
@@ -228,6 +244,7 @@ class _ResultBuilder:
 
 _HOOK_REPORT = "smairt hook report"
 _HOOK_GATE = "smairt hook gate"
+_HOOK_BRIEF = "smairt hook brief"
 
 _SCOPE_NOTE = (
     "Project-scoped: affects only sessions opened inside this project, never "
@@ -259,6 +276,29 @@ def _report_notice(trigger: str) -> str:
     return (
         f"Runs `{_HOOK_REPORT}` (read-only, always exits 0) when {trigger}, so "
         "findings feed back before it ends."
+    )
+
+
+def _brief_notice(trigger: str) -> str:
+    """The "runs brief on trigger" sentence for a harness's SessionStart-equivalent notice.
+
+    Mirrors :func:`_report_notice`'s shape exactly (same "read-only, always
+    exits 0" promise, same one-varying-clause parameter) because ``smairt
+    hook brief`` makes the identical never-wedge-the-session guarantee
+    ``smairt hook report`` does — see ``cli.py``'s ``hook`` command docstring.
+    The two only differ in WHAT they print (``smairt status``'s human view vs.
+    `smairt check`'s findings) and WHEN they fire (session start vs. session
+    end) — this exists as a separate function, not a second call to
+    :func:`_report_notice` with a swapped command name, so the "why" half of
+    the sentence (orienting a fresh session on its own, unprompted) stays
+    specific to brief rather than reusing report's "findings feed back before
+    it ends" phrasing, which would be actively wrong for a hook that runs at
+    the START of a session.
+    """
+    return (
+        f"Runs `{_HOOK_BRIEF}` (read-only, always exits 0) when {trigger}, so a "
+        "fresh session orients itself (`smairt status`'s view) without the "
+        "researcher having to ask."
     )
 
 
@@ -542,15 +582,34 @@ def _install_skills(project_root: Path, root: str, builder: _ResultBuilder) -> N
 # {"matcher": ..., "hooks": [{"type": "command", "command": ...}]}. A PreToolUse
 # command hook blocks by exiting 2, with stderr fed back to the agent -- which is
 # why the strict entry runs `smairt hook gate` (exits 2 on findings) and not
-# `smairt check` (exits 1, a non-blocking error to Claude Code).
+# `smairt check` (exits 1, a non-blocking error to Claude Code). SessionStart is
+# a confirmed Claude Code event too (fires once at the start of a session), which
+# is what lets `smairt hook brief` run there unconditionally, the same way `Stop`
+# always runs `smairt hook report`.
 
 
 def _render_claude_settings(strict: bool) -> str:
-    """Build the JSON content of ``.claude/settings.json`` (Claude Code's hook config)."""
+    """Build the JSON content of ``.claude/settings.json`` (Claude Code's hook config).
+
+    ``SessionStart`` runs ``smairt hook brief`` unconditionally (not gated by
+    ``strict``, same as ``Stop``'s ``smairt hook report`` below) — this is a
+    read-only orientation aid, not an enforcement mechanism, so there is no
+    "strict" variant of it to gate. It exists to fix a specific gap: a fresh
+    assistant session in a SMAIRT project previously had no signal to orient
+    itself (``smairt status``'s view) unless the researcher thought to ask
+    for it, which is exactly the failure this hook closes — see
+    :func:`smairt.status.build_status_report` for what it prints.
+    """
     hooks: dict[str, Any] = {
+        "SessionStart": [{"hooks": [{"type": "command", "command": _HOOK_BRIEF}]}],
         "Stop": [{"hooks": [{"type": "command", "command": _HOOK_REPORT}]}],
     }
-    notice = "Generated by `smairt connect claude-code`. " + _report_notice("a session stops")
+    notice = (
+        "Generated by `smairt connect claude-code`. "
+        + _brief_notice("a session starts")
+        + " "
+        + _report_notice("a session stops")
+    )
     if strict:
         hooks["PreToolUse"] = [
             {
@@ -778,8 +837,21 @@ def _connect_pi(project_root: Path, strict: bool, builder: _ResultBuilder) -> No
 
 
 def _gemini_desired_hooks(strict: bool) -> dict[str, Any]:
-    """The hook entries we'd like present in Gemini CLI's settings (before merging)."""
-    hooks: dict[str, Any] = {"SessionEnd": [{"command": _HOOK_REPORT}]}
+    """The hook entries we'd like present in Gemini CLI's settings (before merging).
+
+    ``SessionStart`` is included unconditionally, same as Claude Code's (see
+    :func:`_render_claude_settings`): the section header comment above already
+    establishes ``SessionStart`` as a real, documented Gemini CLI event name
+    (alongside ``BeforeTool``/``SessionEnd``), so wiring it here is not a guess
+    the way an unlisted event name would be -- only the exact entry SHAPE below
+    is best-effort, not the event's existence. It runs `smairt hook brief`,
+    read-only and always exit-0, for the identical reason Claude Code's does:
+    orienting a fresh session without the researcher having to ask.
+    """
+    hooks: dict[str, Any] = {
+        "SessionStart": [{"command": _HOOK_BRIEF}],
+        "SessionEnd": [{"command": _HOOK_REPORT}],
+    }
     if strict:
         hooks["BeforeTool"] = [{"command": _HOOK_GATE}]
     return hooks
@@ -791,11 +863,13 @@ def _gemini_comment(strict: bool) -> str:
         "Generated/merged by `smairt connect gemini-cli`. `context.fileName` is a "
         "documented Gemini CLI setting (its own docs use AGENTS.md as the example "
         "value) and makes Gemini CLI read AGENTS.md. BEST-EFFORT CONFIG for the hooks "
-        "section: the research survey confirmed the BeforeTool/SessionEnd hook event "
-        "names and that hooks live in this file, but did not capture a literal hooks "
-        "entry example -- the shape below is inferred and should be verified against "
-        f"your Gemini CLI version. The SessionEnd hook runs `{_HOOK_REPORT}` "
-        "(read-only, always exits 0) so findings feed back before the session ends."
+        "section: the research survey confirmed the BeforeTool/SessionStart/SessionEnd "
+        "hook event names and that hooks live in this file, but did not capture a "
+        "literal hooks entry example -- the shape below is inferred and should be "
+        f"verified against your Gemini CLI version. The SessionStart hook runs "
+        f"`{_HOOK_BRIEF}` (read-only, always exits 0) so a fresh session orients itself; "
+        f"the SessionEnd hook runs `{_HOOK_REPORT}` (read-only, always exits 0) so "
+        "findings feed back before the session ends."
     )
     if strict:
         notice += (

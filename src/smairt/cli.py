@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import Callable, NoReturn
 
 import typer
 
@@ -180,17 +180,174 @@ def _confirm_or_default(prompt: str, *, default: bool) -> bool:
     return typer.confirm(prompt, default=default) if sys.stdin.isatty() else default
 
 
+def _prompt_text_or_default(intro: Callable[[], None], prompt: str, *, default: str) -> str:
+    """Ask a free-text question with :func:`typer.prompt`, but only at a real terminal.
+
+    The free-text sibling of :func:`_confirm_or_default`, needed once
+    ``--question``/``--expertise`` added two more optional prompts that (unlike
+    the yes/no hpc/paper/git ones) take arbitrary text rather than a bool: a
+    plain ``typer.prompt(..., default="")`` is NOT gated by ``isatty()`` the
+    way ``typer.confirm`` is, so calling one unconditionally would try to read
+    a line from stdin even under a headless caller with none to give -- e.g. a
+    `CliRunner` test that passes every other identity flag and expects
+    ZERO prompts (the "non-interactive contract" the ``smairt-new-project``
+    skill explicitly documents and the test suite guards). Skipping the
+    ``intro`` callback too, not just the prompt itself, matters just as much:
+    the multi-line "here's what a good answer looks like" text these two
+    prompts print (see :func:`_prompt_big_question` / :func:`_prompt_expertise`)
+    would otherwise show up as unexplained noise in every non-interactive
+    ``smairt new``/``smairt adopt`` run and every test's captured output.
+    ``intro`` is a thunk (a zero-argument callable) rather than a pre-rendered
+    string so it is never even evaluated -- let alone printed -- on the
+    skip path.
+    """
+    if not sys.stdin.isatty():
+        return default
+    intro()
+    return str(typer.prompt(prompt, default=default)).strip()
+
+
+_BIG_QUESTION_EXAMPLES = (
+    "Does denoising recover the true signal in low-SNR live-cell imaging, "
+    "or does it invent structure?",
+    "Which host factors predict severe outcome in the 2024 cohort, "
+    "independent of age?",
+)
+
+
+def _prompt_big_question() -> str:
+    """Prompt for the project's "big question" -- ``smairt new --question``'s value.
+
+    Root cause this exists to fix: ``smairt new`` used to collect only filing
+    metadata (name/researcher/description/harness/hpc/paper/git) and never
+    asked about INTENT -- the actual question the whole project hangs off,
+    which is what ``background/question.md`` is FOR. Without this prompt, that
+    file ships as an unedited placeholder and the researcher's one-line
+    ``description`` leaks into ``STATUS.md``'s ``## Focus`` as if it were the
+    science, because description was the only text `smairt new` ever had.
+
+    Deliberately skippable (``default=""``, and the whole prompt is skipped
+    outright under a headless caller -- see :func:`_prompt_text_or_default`):
+    a researcher genuinely may not have this phrased on day one, and forcing
+    a vague placeholder answer into it (rather than the honest, later-
+    replaceable placeholder ``smairt new`` already writes) would be worse
+    than the gap this closes. See :func:`smairt.project.create_project`'s
+    docstring for exactly what changes downstream when this IS answered vs.
+    skipped.
+
+    The two example questions printed here are the actual fix for the
+    SECOND failure mode this addresses, not just the missing prompt: a
+    researcher asked "what's your big question" with no model of the answer
+    tends to answer at description-level vagueness ("understanding gene
+    expression"), which would make ``question.md`` no more useful than the
+    placeholder it replaces. Both examples are deliberately concrete,
+    falsifiable, and about ONE dataset/cohort/system, not a field -- modeling
+    the granularity a useful answer needs, not just that an answer is wanted.
+    """
+
+    def _intro() -> None:
+        typer.secho("Big question:", fg=typer.colors.CYAN, bold=True)
+        typer.echo(
+            "The one question everything under experiments/ answers -- concrete and "
+            "falsifiable, about one dataset or system, not a field. Skip if you don't "
+            "have it phrased yet."
+        )
+        for example in _BIG_QUESTION_EXAMPLES:
+            typer.echo(f'  e.g. "{example}"')
+
+    return _prompt_text_or_default(_intro, "Big question (Enter to skip)", default="")
+
+
+_EXPERTISE_EXAMPLES = (
+    "computational immunology; wet-lab background, not a programmer",
+    "single-cell genomics; comfortable in R, learning Python",
+    "materials chemistry; heavy MATLAB user, new to version control",
+    "clinical epidemiology; I write SQL, I don't write scripts",
+)
+
+
+def _prompt_expertise() -> str:
+    """Prompt for the researcher's own background -- ``--expertise``'s value.
+
+    This is the highest-value prompt this file added, and the reason is a
+    specific failure mode a researcher described directly: asked for their
+    background, they said they would have written "Computational Biology" --
+    and thought that answer was already very detailed. It is a field name,
+    and a field name alone tells an assistant nothing about how to talk to
+    the person who typed it.
+
+    The examples below all have two halves on purpose, and the prompt text
+    says so explicitly, because the second half is the one that actually
+    changes assistant behavior: "computational immunology" alone doesn't
+    tell an assistant whether to explain what a ``for`` loop is; "wet-lab
+    background, not a programmer" does. A field alone (what the researcher
+    would have typed unprompted, per the report above) changes nothing about
+    HOW an assistant should talk -- only the tooling-comfort half does, which
+    is exactly why every example pairs one with the other rather than
+    listing field names alone.
+
+    Skippable for the same reason ``--question`` is (see
+    :func:`_prompt_big_question`): a good two-half answer takes a moment to
+    compose, and a rushed, low-information one (just restating the field) is
+    worse than leaving ``expertise:`` absent -- an absent field costs
+    nothing (see :func:`smairt.project.render_identity`'s docstring: no key
+    is written at all, and it is never a `smairt check` finding), where a
+    hollow one would sit in ``smairt.yaml``/``AGENTS.md`` looking authoritative
+    while carrying no more information than the field name already did.
+    """
+
+    def _intro() -> None:
+        typer.secho("Your background:", fg=typer.colors.CYAN, bold=True)
+        typer.echo(
+            "Your field, plus how much of the computing side you want explained. The "
+            "second half matters more than the first:"
+        )
+        for example in _EXPERTISE_EXAMPLES:
+            typer.echo(f"  {example}")
+
+    return _prompt_text_or_default(_intro, "Your background (Enter to skip)", default="")
+
+
 def _prompt_missing_identity(
     name: str | None,
     researcher: str | None,
     description: str | None,
     harness: Harness | None,
-) -> tuple[str, str, str, Harness]:
-    """Prompt for whichever of name/researcher/description/harness is still ``None``.
+    *,
+    question: str | None = None,
+    ask_question: bool = False,
+    expertise: str | None = None,
+) -> tuple[str, str, str, Harness, str, str]:
+    """Prompt for whichever of name/researcher/description/harness is still ``None``,
+    plus the optional question/expertise prompts.
 
     Shared by ``new`` and ``adopt`` so the identity prompts — including the
     harness choice — are worded identically no matter which command
-    triggered them.
+    triggered them. ``question``/``expertise`` are always returned as plain
+    ``str`` (never ``None``): a caller that never asked (``ask_question=False``,
+    ``adopt``'s permanent state) or a researcher who skipped gets back ``""``,
+    so every caller can hand the result straight to
+    :func:`smairt.project.create_project` /
+    :func:`smairt.adopt.adopt_project` without an extra ``or ""`` at each
+    call site.
+
+    ``ask_question`` gates the big-question prompt because it is ``new``-only
+    (spec: adoption never writes ``background/question.md`` -- see
+    :mod:`smairt.adopt`'s module docstring) — ``adopt`` always calls this with
+    the default ``False`` and never even passes a CLI flag for it, so the
+    prompt genuinely cannot fire from that command. ``expertise`` has no such
+    gate because both commands support it identically (see
+    :func:`smairt.adopt.adopt_project`'s docstring for why that one applies
+    equally to new and adopted work); the parameter here just carries through
+    whatever ``--expertise`` (or the interactive answer) already produced,
+    same as ``name``/``researcher``/``description`` above it.
+
+    Ordering: question (when asked) comes right after description -- the
+    identity questions proper -- and before harness/expertise, since it's the
+    most consequential thing a researcher decides in this flow and shouldn't
+    be buried after the harness picker. Expertise comes last, right before
+    return, since it's about the researcher rather than the project and reads
+    naturally as a closing question.
     """
     if name is None:
         name = typer.prompt("Project name")
@@ -198,9 +355,84 @@ def _prompt_missing_identity(
         researcher = typer.prompt("Researcher")
     if description is None:
         description = typer.prompt("One-line description")
+    if ask_question and question is None:
+        question = _prompt_big_question()
     if harness is None:
         harness = _prompt_harness()
-    return name, researcher, description, harness
+    if expertise is None:
+        expertise = _prompt_expertise()
+    return name, researcher, description, harness, question or "", expertise or ""
+
+
+_HARNESS_LAUNCH_COMMAND: dict[Harness, str] = {
+    Harness.claude_code: "claude",
+    Harness.codex: "codex",
+    Harness.opencode: "opencode",
+    Harness.gemini_cli: "gemini",
+    Harness.cursor: "cursor",
+    Harness.pi: "pi",
+}
+"""How each harness is actually typed at a terminal to start a session.
+
+Deliberately not just ``Harness.value`` (``"claude-code"``, ``"gemini-cli"``)
+-- those are ``smairt``'s own identifiers for ``--harness``/``smairt.yaml``,
+not the real command a researcher runs. Used only by :func:`_print_next_steps`
+below, where naming the actual harness (not a generic "start your assistant")
+is the entire point -- see that function's docstring.
+"""
+
+
+def _print_next_steps(root: Path, harness: Harness) -> None:
+    """Print the closing "what do I do now" block after ``smairt new`` finishes.
+
+    Root cause this exists to fix: ``smairt new`` used to end at "Created
+    <root>" (plus the connect/git lines) and stop -- a researcher described
+    their own next move at that point as "my best guess was jump into the
+    folder", i.e. they had no idea what to do after the folder existed. The
+    fix is not a longer explanation; it's literally handing them the three
+    commands/words that get them into a working session, ending with the
+    exact sentence to say, because "open your assistant and describe your
+    problem" is a much higher-friction ask than "type this."
+
+    Names the actual harness the researcher chose (``claude``, ``codex``,
+    ``cursor``, ``opencode``, ``gemini``, ``pi`` -- see
+    :data:`_HARNESS_LAUNCH_COMMAND`), never a generic "start your assistant":
+    a researcher who just answered the harness prompt should not have to
+    translate a generic instruction back into the tool they actually have
+    open. When ``harness`` is :data:`Harness.none`, there is no assistant to
+    talk to, so the block points at the CLI path instead
+    (``smairt unit new question``) rather than printing a launch command and
+    a sentence to say to nobody.
+
+    Prints ``cd <folder>`` using a path relative to the current working
+    directory when ``root`` is under it (the common case -- a researcher who
+    just ran ``smairt new`` from the parent directory), falling back to the
+    absolute path when it isn't (e.g. ``--path`` pointed somewhere else
+    entirely) -- ``Path.relative_to`` raises ``ValueError`` in that case,
+    which is the signal to use the full path instead of a nonsensical
+    ``../../`` chain.
+
+    HARD CONSTRAINT, not a style choice: this block says nothing about Git,
+    ever, regardless of whether ``smairt new --git`` ran. The researcher who
+    stays local made that choice on purpose ("it should be an option, not
+    ideal but an option," in their own words) -- the existing git-outcome
+    line above this block (in :func:`new`) already tells them what happened
+    if they asked for it; re-litigating or nagging about it in the one block
+    whose entire job is "get to a working session" would undercut a decision
+    that was never this block's to second-guess.
+    """
+    try:
+        cd_target = root.relative_to(Path.cwd())
+    except ValueError:
+        cd_target = root
+    typer.echo("")
+    typer.echo("Next:")
+    typer.echo(f"  cd {cd_target}")
+    if harness is Harness.none:
+        typer.echo("  smairt unit new question    # create your first question unit")
+    else:
+        typer.echo(f"  {_HARNESS_LAUNCH_COMMAND[harness]}            # start your assistant here")
+        typer.echo('  Then say: "Help me start my first question."')
 
 
 @app.command()
@@ -209,6 +441,16 @@ def new(
     researcher: str | None = typer.Option(None, "--researcher", help="Researcher name."),
     description: str | None = typer.Option(
         None, "--description", help="One-line project description."
+    ),
+    question: str | None = typer.Option(
+        None,
+        "--question",
+        help="The project's big question: becomes background/question.md and STATUS.md's Focus.",
+    ),
+    expertise: str | None = typer.Option(
+        None,
+        "--expertise",
+        help="Your field plus how much of the computing side you want explained.",
     ),
     path: Path | None = typer.Option(
         None, "--path", help="Parent directory for the new project (default: current directory)."
@@ -229,8 +471,14 @@ def new(
     ),
 ) -> None:
     """Create a new SMAIRT project: the ten-item day-one scaffold."""
-    name, researcher, description, harness = _prompt_missing_identity(
-        name, researcher, description, harness
+    name, researcher, description, harness, question, expertise = _prompt_missing_identity(
+        name,
+        researcher,
+        description,
+        harness,
+        question=question,
+        ask_question=True,
+        expertise=expertise,
     )
     if hpc is None:
         hpc = _confirm_or_default("Expect to run on HPC/SLURM?", default=False)
@@ -263,6 +511,9 @@ def new(
             harness=harness,
             hpc=hpc,
             paper=paper,
+            question=question,
+            expertise=expertise,
+            git=git,
         )
     except (PathExistsError, WriteError, ValueError) as error:
         _fail("new", str(error))
@@ -288,7 +539,11 @@ def new(
 
     # Git init/add runs LAST, after the harness wiring above, so everything
     # `smairt new` generates -- smairt.yaml, AGENTS.md, and the harness's own
-    # hook config -- gets staged together, not just the day-one scaffold.
+    # hook config -- gets staged together, not just the day-one scaffold. The
+    # git/no-git DECISION itself was already made above, before create_project
+    # ran, so create_project could record it (settings.git: false on an
+    # opt-out -- see smairt.project.render_identity) regardless of when the
+    # actual `git init` call happens.
     if git:
         git_result = project_module.init_git(root)
         if git_result.outcome == "initialized":
@@ -302,6 +557,8 @@ def new(
         else:
             typer.echo(f"Warning: {git_result.message}", err=True)
 
+    _print_next_steps(root, harness)
+
 
 @app.command()
 def adopt(
@@ -309,6 +566,11 @@ def adopt(
     researcher: str | None = typer.Option(None, "--researcher", help="Researcher name."),
     description: str | None = typer.Option(
         None, "--description", help="One-line project description."
+    ),
+    expertise: str | None = typer.Option(
+        None,
+        "--expertise",
+        help="Your field plus how much of the computing side you want explained.",
     ),
     path: Path | None = typer.Option(
         None, "--path", help="Directory to adopt (default: current directory)."
@@ -318,8 +580,8 @@ def adopt(
     ),
 ) -> None:
     """Adopt a pre-existing directory: lay the contract files around it, move nothing."""
-    name, researcher, description, harness = _prompt_missing_identity(
-        name, researcher, description, harness
+    name, researcher, description, harness, _question, expertise = _prompt_missing_identity(
+        name, researcher, description, harness, expertise=expertise
     )
 
     root = path or Path.cwd()
@@ -330,6 +592,7 @@ def adopt(
             researcher=researcher,
             description=description,
             harness=harness,
+            expertise=expertise,
         )
     except (adopt_module.NotAdoptableError, WriteError, ValueError) as error:
         _fail("adopt", str(error))
@@ -368,22 +631,33 @@ def hook(
         ...,
         help=(
             "'report' prints findings and always exits 0; "
+            "'brief' prints `smairt status`'s human view and always exits 0; "
             "'gate' exits 2 while findings exist (the block code harness hooks understand)."
         ),
     ),
 ) -> None:
-    """Run `smairt check` speaking a harness hook's exit-code protocol.
+    """Run `smairt check`/`smairt status` speaking a harness hook's exit-code protocol.
 
     Generated hook configs (see ``smairt connect``) call this instead of
-    ``smairt check`` directly, because the raw check exits 1 on findings and
-    hook protocols give exit codes different meanings: Claude Code, Codex, and
-    Cursor all treat exit 2 as "block this action and feed stderr back to the
-    agent", while exit 1 is a plain non-blocking error. ``gate`` speaks that
-    blocking dialect; ``report`` is for session-end hooks that should surface
-    findings without ever wedging the harness in a failure loop.
+    ``smairt check``/``smairt status`` directly, because the raw commands
+    either exit 1 on findings (`check`) or were never designed to run
+    unattended inside a hook at all (`status`), and hook protocols give exit
+    codes different meanings: Claude Code, Codex, and Cursor all treat exit 2
+    as "block this action and feed stderr back to the agent", while exit 1 is
+    a plain non-blocking error. ``gate`` speaks that blocking dialect;
+    ``report`` and ``brief`` both speak the OTHER dialect -- "surface
+    information, never wedge the harness in a failure loop" -- for the two
+    ends of a session: ``report`` at session end (this project's `smairt
+    check` findings), ``brief`` at session START (this project's
+    orientation, via :func:`smairt.status.build_status_report` --
+    ``smairt hook brief`` exists specifically so a fresh assistant session
+    orients itself the moment it opens, without the researcher having to
+    think to ask for `smairt status`). See ``smairt connect claude-code``'s
+    generated ``.claude/settings.json`` for where ``SessionStart``/``Stop``
+    wire each of these up.
     """
-    if mode not in ("report", "gate"):
-        _fail("hook", f"unknown mode {mode!r}. Choices: report, gate.")
+    if mode not in ("report", "gate", "brief"):
+        _fail("hook", f"unknown mode {mode!r}. Choices: report, gate, brief.")
     try:
         root = project_module.find_project_root(Path.cwd())
     except project_module.ProjectConfigError as error:
@@ -393,6 +667,42 @@ def hook(
         _fail("hook", str(error))
     if root is None:
         _fail("hook", _HOOK_OUTSIDE_PROJECT_MESSAGE)
+
+    if mode == "brief":
+        # A separate branch, not folded into the report/gate try/except below:
+        # `brief` calls a different function (`build_status_report`, not
+        # `run_checks`) with a different renderer and a different crash
+        # message, but makes the exact same "must never wedge the session"
+        # promise `report` makes below, for the identical reason -- that
+        # promise cannot hold only while smairt itself is bug-free.
+        try:
+            status_report = status_module.build_status_report(root)
+        except Exception as error:  # noqa: BLE001 - see above; a hook must never crash a session.
+            typer.echo(
+                f"smairt hook: `smairt status` failed unexpectedly: {error}. "
+                "This is a smairt bug, not a problem with your project; run `smairt "
+                "status` directly to see it in full.",
+                err=True,
+            )
+            raise typer.Exit(code=0) from error
+        output = status_module.render_human(status_report)
+        # A brand-new project -- no stages, no open questions, no closed
+        # questions either -- is exactly the case that used to strand a
+        # researcher: `smairt new` created the scaffold and stopped, and a
+        # fresh assistant session had no signal that the very first move is
+        # creating a unit. One sentence closes that gap right where the
+        # assistant will actually see it, instead of relying on AGENTS.md
+        # being read carefully enough to notice the gap on its own.
+        has_units = bool(
+            status_report.spine or status_report.live_questions or status_report.recently_closed
+        )
+        if not has_units:
+            output += (
+                "\n\nNo units yet -- create the first one with `smairt unit new stage|question`."
+            )
+        typer.echo(output)
+        raise typer.Exit(code=0)
+
     try:
         report = check_module.run_checks(root)
     except Exception as error:  # noqa: BLE001 - see below; a hook must never crash a session.

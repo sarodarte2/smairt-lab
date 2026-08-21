@@ -68,6 +68,20 @@ def test_claude_code_writes_bridge_and_stop_hook(tmp_path: Path) -> None:
     assert "PreToolUse" not in payload["hooks"]
 
 
+def test_claude_code_writes_a_session_start_brief_hook(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.claude_code, strict=False)
+
+    payload = json.loads((root / ".claude" / "settings.json").read_text())
+    session_start = payload["hooks"]["SessionStart"][0]
+    assert session_start["hooks"][0]["command"] == "smairt hook brief"
+    # SessionStart is unconditional -- it's a read-only orientation aid, not
+    # an enforcement mechanism, so it is wired the same way whether or not
+    # strict_hooks is on. Also written under strict below.
+    assert "smairt hook brief" in payload["_comment"]
+
+
 def test_claude_code_creates_bridge_when_missing(tmp_path: Path) -> None:
     root = _project(tmp_path)
     (root / "CLAUDE.md").unlink()
@@ -332,6 +346,19 @@ def test_gemini_writes_settings_with_context_filename_and_session_end_hook(tmp_p
     assert "AGENTS.md" in payload["context"]["fileName"]
     assert payload["hooks"]["SessionEnd"][0]["command"] == "smairt hook report"
     assert "BeforeTool" not in payload["hooks"]
+
+
+def test_gemini_writes_a_session_start_brief_hook(tmp_path: Path) -> None:
+    # Gemini's own "verified shape" research note already names SessionStart
+    # as a real, documented event (alongside BeforeTool/SessionEnd) -- only
+    # the literal hooks entry shape is best-effort, not the event's
+    # existence -- so it gets wired the same way Claude Code's does.
+    root = _project(tmp_path)
+
+    connect_module.connect(root, Harness.gemini_cli, strict=False)
+
+    payload = json.loads((root / ".gemini" / "settings.json").read_text())
+    assert payload["hooks"]["SessionStart"][0]["command"] == "smairt hook brief"
 
 
 def test_gemini_strict_hooks_adds_before_tool_blocking_hook(tmp_path: Path) -> None:

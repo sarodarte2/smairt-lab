@@ -364,6 +364,164 @@ def test_new_explicit_hpc_flag_still_creates_hpc_folder(tmp_path: Path) -> None:
     assert (root / "hpc").is_dir()
 
 
+def test_new_question_flag_seeds_question_md_and_status_focus(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Question Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Filing label, not the science.",
+            "--question",
+            "Does denoising recover the true signal in low-SNR imaging?",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "question_project"
+    question_md = (root / "background" / "question.md").read_text()
+    status = (root / "STATUS.md").read_text()
+    assert "Does denoising recover the true signal" in question_md
+    assert "Does denoising recover the true signal" in status
+
+
+def test_new_without_question_flag_leaves_the_placeholder(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "No Question Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises the skipped --question path.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "no_question_project"
+    question_md = (root / "background" / "question.md").read_text()
+    assert "Replace this with the project's big question" in question_md
+
+
+def test_new_expertise_flag_is_recorded(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Expertise Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises --expertise end to end.",
+            "--expertise",
+            "clinical epidemiology; I write SQL, I don't write scripts",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    root = tmp_path / "expertise_project"
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    assert config["expertise"] == "clinical epidemiology; I write SQL, I don't write scripts"
+    agents = (root / "AGENTS.md").read_text()
+    assert "clinical epidemiology; I write SQL, I don't write scripts" in agents
+
+
+# --- the closing "Next:" block ---------------------------------------------------
+
+
+def test_new_next_steps_block_names_the_chosen_harness(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "Codex Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises the next-steps block for a real harness.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "codex",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Next:" in result.output
+    next_block = result.output.split("Next:", 1)[1]
+    assert "cd " in next_block
+    assert "codex_project" in next_block.split("\n")[1]  # the `cd` line names the folder
+    assert "  codex " in next_block  # the launch command names the actual harness
+    assert 'Then say: "Help me start my first question."' in next_block
+    # The next-steps block never nags about git, even though this run chose
+    # --no-git -- the researcher's own local-only choice is not this block's
+    # business to relitigate.
+    assert "git" not in next_block.lower()
+
+
+def test_new_next_steps_block_points_at_the_cli_when_harness_is_none(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "--name",
+            "No Harness Project",
+            "--researcher",
+            "Ada Lovelace",
+            "--description",
+            "Exercises the next-steps block with harness none.",
+            "--path",
+            str(tmp_path),
+            "--harness",
+            "none",
+            "--no-hpc",
+            "--no-paper",
+            "--no-git",
+        ],
+        input="",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Next:" in result.output
+    assert "smairt unit new question" in result.output
+    assert 'Then say:' not in result.output
+
+
 def test_new_refuses_to_overwrite_an_existing_project(tmp_path: Path) -> None:
     flags = [
         "new",

@@ -2,8 +2,11 @@
 
 ``report`` always exits 0 so a session-end hook can never wedge a harness in
 a failure loop; ``gate`` exits 2 — the block code Claude Code, Codex, and
-Cursor all understand — while findings exist. Both are read-only wrappers
-over ``smairt check``.
+Cursor all understand — while findings exist. ``report`` and ``gate`` are
+read-only wrappers over ``smairt check``; ``brief`` is the same "never wedge
+the session" promise as ``report``, but wraps ``smairt status`` instead, and
+runs at session START (see ``smairt connect claude-code``'s generated
+``SessionStart`` hook) so a fresh assistant session orients itself.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typer.testing import CliRunner
 
 from smairt.cli import app
 from smairt.project import Harness, create_project
+from smairt.units import create_stage
 
 runner = CliRunner()
 
@@ -130,6 +134,71 @@ def test_gate_exits_two_not_a_crash_exit_when_the_underlying_check_used_to_crash
 
     assert result.exit_code == 2
     assert "SMAIRT001" in result.stderr
+
+
+# --- brief -----------------------------------------------------------------------
+
+
+def test_brief_exits_zero_and_prints_status_on_a_fresh_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(_project(tmp_path))
+
+    result = runner.invoke(app, ["hook", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "Focus:" in result.output
+    assert "Spine:" in result.output
+
+
+def test_brief_points_at_the_first_move_when_the_project_has_zero_units(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(_project(tmp_path))
+
+    result = runner.invoke(app, ["hook", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "No units yet" in result.output
+    assert "smairt unit new stage|question" in result.output
+
+
+def test_brief_omits_the_zero_unit_line_once_a_unit_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    create_stage(root, "Alignment", created=date(2026, 1, 1))
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["hook", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "No units yet" not in result.output
+
+
+def test_brief_still_exits_zero_when_the_underlying_status_build_crashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(_project(tmp_path))
+
+    def _boom(_root: Path) -> None:
+        raise RuntimeError("simulated internal failure")
+
+    monkeypatch.setattr("smairt.status.build_status_report", _boom)
+
+    result = runner.invoke(app, ["hook", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "smairt bug" in result.output + result.stderr
+
+
+def test_brief_refuses_outside_a_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["hook", "brief"])
+
+    assert result.exit_code == 1
+    assert "not inside a SMAIRT project" in result.output + result.stderr
 
 
 def test_unknown_mode_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

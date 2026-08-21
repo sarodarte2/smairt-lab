@@ -93,6 +93,115 @@ def test_harness_none_records_an_empty_harness_list(tmp_path: Path) -> None:
     assert config["harnesses"] == []
 
 
+# --- --question: background/question.md + STATUS.md Focus ----------------------
+
+
+def test_question_given_becomes_question_md_body_and_status_focus(tmp_path: Path) -> None:
+    root = _create(
+        tmp_path,
+        description="Computational Biology.",
+        question="Does denoising recover the true signal in low-SNR live-cell imaging?",
+    )
+
+    question_md = (root / "background" / "question.md").read_text()
+    status = (root / "STATUS.md").read_text()
+
+    assert "Does denoising recover the true signal" in question_md
+    assert "Replace this with the project's big question" not in question_md
+    assert "Does denoising recover the true signal" in status
+    # description stays the filing label -- it must NOT leak into Focus once
+    # a real question was given.
+    assert "Computational Biology." not in status.split("## Focus")[1].split("##")[0]
+
+
+def test_question_skipped_leaves_the_placeholder_and_uses_description_as_focus(
+    tmp_path: Path,
+) -> None:
+    root = _create(tmp_path, description="A project used to exercise smairt new.")
+
+    question_md = (root / "background" / "question.md").read_text()
+    status = (root / "STATUS.md").read_text()
+
+    assert "Replace this with the project's big question" in question_md
+    assert "A project used to exercise smairt new." in question_md
+    assert "A project used to exercise smairt new." in status.split("## Focus")[1].split("##")[0]
+
+
+def test_question_only_changes_question_md_and_status_md(tmp_path: Path) -> None:
+    """Everything else about the scaffold is untouched by --question: smairt.yaml
+    carries no question-related key, and AGENTS.md's title line is still the
+    short description, not the question."""
+    with_question = _create(
+        tmp_path / "with_question", question="Does X predict Y in the 2024 cohort?"
+    )
+    without_question = _create(tmp_path / "without_question")
+
+    with_files = {p.relative_to(with_question) for p in with_question.rglob("*") if p.is_file()}
+    without_files = {
+        p.relative_to(without_question) for p in without_question.rglob("*") if p.is_file()
+    }
+    assert with_files == without_files
+
+    config = yaml.safe_load((with_question / "smairt.yaml").read_text())
+    assert "question" not in config
+    agents = (with_question / "AGENTS.md").read_text()
+    assert "Does X predict Y in the 2024 cohort?" not in agents
+
+
+# --- --expertise: smairt.yaml + AGENTS.md ---------------------------------------
+
+
+def test_expertise_given_is_recorded_in_smairt_yaml_and_agents_md(tmp_path: Path) -> None:
+    root = _create(
+        tmp_path, expertise="computational immunology; wet-lab background, not a programmer"
+    )
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    agents = (root / "AGENTS.md").read_text()
+
+    assert config["expertise"] == "computational immunology; wet-lab background, not a programmer"
+    assert "computational immunology; wet-lab background, not a programmer" in agents
+
+
+def test_expertise_absent_writes_no_key_and_no_agents_md_section(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    agents = (root / "AGENTS.md").read_text()
+
+    assert "expertise" not in config
+    assert "Who you're working with" not in agents
+
+
+def test_expertise_does_not_change_agents_md_length_budget(tmp_path: Path) -> None:
+    root = _create(
+        tmp_path, expertise="single-cell genomics; comfortable in R, learning Python"
+    )
+
+    agents_lines = len((root / "AGENTS.md").read_text().splitlines())
+
+    assert agents_lines <= 120, f"AGENTS.md is {agents_lines} lines"
+
+
+# --- --git opt-out recorded in smairt.yaml --------------------------------------
+
+
+def test_git_default_records_no_settings_git_key(tmp_path: Path) -> None:
+    root = _create(tmp_path)
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+
+    assert "git" not in config["settings"]
+
+
+def test_git_opt_out_records_settings_git_false(tmp_path: Path) -> None:
+    root = _create(tmp_path, git=False)
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+
+    assert config["settings"]["git"] is False
+
+
 def test_generation_never_overwrites_an_existing_file(tmp_path: Path) -> None:
     root = tmp_path / "project"
     _create(tmp_path)

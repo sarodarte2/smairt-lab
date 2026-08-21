@@ -10,14 +10,32 @@ run — write it after and it's not a hypothesis, it's a rationalization.
 
 ## Steps
 
-1. Sharpen the title and hypothesis WITH the researcher, in conversation,
-   before creating anything. A vague title or an untestable hypothesis is
-   worth pushing back on now, not after the unit exists. In the SAME
-   conversation, also ask what they'll measure and how they'll decide —
-   the analysis plan — and get at least a first draft of it before anything
-   runs. This is the normal path, not a fallback: `smairt check` only
-   catches a missing plan as a backstop, at close, when it never got
-   written here.
+1. Read `background/question.md` first, before asking anything.
+   - Real question in there: the probe should hang off it. Draft a
+     candidate title and hypothesis from it and propose that draft to the
+     researcher — don't ask them to produce one cold.
+   - Still the `smairt new` placeholder: say so plainly and ask what the
+     probe is instead. A probe can legitimately come before the big
+     question exists; if one surfaces later, filling in
+     `background/question.md` is a routine edit, not something to
+     negotiate here.
+   - Draft, don't interrogate, either way: propose something concrete for
+     the researcher to react to. "No, it's not effect size, it's
+     variance" is faster to say than composing a falsifiable hypothesis
+     from a blank page — and a rejected draft is a success, it surfaces
+     what they actually meant.
+   - Ask one or two questions at a time — never dump the whole form at
+     once.
+   - An untestable hypothesis ("see whether X works") still gets pushed
+     back on — that's this skill's scientific job and it doesn't soften.
+     Do it by offering a falsifiable rewrite of what they said, not by
+     rejecting their phrasing and asking them to try again.
+   - Once the title and hypothesis are settled, move to the analysis
+     plan — what they'll measure and how they'll decide — as its own,
+     later beat, not alongside the hypothesis. Get at least a first draft
+     before anything runs: this is the normal path, not a fallback;
+     `smairt check` only catches a missing plan as a backstop, at close,
+     when it never got written here.
 2. If this question exists because of something another unit's result
    showed — a batch effect noticed in a figure, an unexpected value in a
    log — that's `--from <origin-unit-folder>`, not a note buried in this

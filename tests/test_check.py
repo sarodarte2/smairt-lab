@@ -94,6 +94,31 @@ def test_fresh_project_passes_clean(tmp_path: Path) -> None:
     assert report.exit_code == 0
 
 
+def test_project_without_expertise_passes_clean(tmp_path: Path) -> None:
+    # An absent `expertise:` must never become a SMAIRT011 finding (or any
+    # other finding): _PROJECT_CONFIG_REQUIRED_FIELDS deliberately does not
+    # include it (see check.py's DG-1 notes), so a project that never
+    # answered the prompt -- the overwhelming majority -- stays clean.
+    root = _project(tmp_path)
+
+    config = yaml.safe_load((root / "smairt.yaml").read_text())
+    assert "expertise" not in config
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
+def test_project_with_expertise_also_passes_clean(tmp_path: Path) -> None:
+    root = _project(
+        tmp_path, expertise="materials chemistry; heavy MATLAB user, new to version control"
+    )
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+
+
 def test_fresh_stage_and_question_pass_clean(tmp_path: Path) -> None:
     root = _project(tmp_path)
     create_stage(root, "Alignment", created=date.today())
@@ -364,6 +389,53 @@ def test_rule4_git_absent_gives_advisory_not_a_finding(tmp_path: Path) -> None:
     report = run_checks(root)
 
     assert report.findings == ()
+    assert any(s.id == SUGGEST_GIT_UNAVAILABLE for s in report.suggestions)
+
+
+# --- DG-5: SMAIRT101 suppressed on a recorded git opt-out -----------------------
+
+
+def test_smairt101_still_fires_when_git_setting_is_absent(tmp_path: Path) -> None:
+    # No `git=` passed at all -- the common case for every project created
+    # before this setting existed. SMAIRT101 must fire exactly as before.
+    root = _project(tmp_path)
+
+    report = run_checks(root)
+
+    assert any(s.id == SUGGEST_GIT_UNAVAILABLE for s in report.suggestions)
+
+
+def test_smairt101_still_fires_when_git_setting_is_explicitly_true(tmp_path: Path) -> None:
+    root = _project(tmp_path, git=True)
+
+    report = run_checks(root)
+
+    assert any(s.id == SUGGEST_GIT_UNAVAILABLE for s in report.suggestions)
+
+
+def test_smairt101_is_suppressed_when_git_opt_out_is_recorded(tmp_path: Path) -> None:
+    # `smairt new --no-git` (or answering "no" at its prompt) records
+    # settings.git: false -- a deliberate choice, not an accident, so the
+    # advisory that exists to catch the accident must stay silent.
+    root = _project(tmp_path, git=False)
+
+    report = run_checks(root)
+
+    assert report.findings == ()
+    assert not any(s.id == SUGGEST_GIT_UNAVAILABLE for s in report.suggestions)
+
+
+def test_smairt101_still_fires_inside_a_git_opt_out_project_missing_smairt_yaml(
+    tmp_path: Path,
+) -> None:
+    # Defensive-read regression: a missing/broken smairt.yaml must degrade to
+    # today's behavior (SMAIRT101 fires), never crash and never silently
+    # suppress on a read that couldn't actually confirm an opt-out.
+    root = _project(tmp_path, git=False)
+    (root / "smairt.yaml").unlink()
+
+    report = run_checks(root)
+
     assert any(s.id == SUGGEST_GIT_UNAVAILABLE for s in report.suggestions)
 
 
